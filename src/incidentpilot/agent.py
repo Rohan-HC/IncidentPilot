@@ -22,10 +22,10 @@ _TOOL_NAMES = {
 def make_model() -> Any:
     from langchain_ollama import ChatOllama
 
-    return ChatOllama(model="qwen3:4b-instruct", temperature=0, reasoning=False, num_predict=256)
+    return ChatOllama(model="qwen3:4b-instruct", temperature=0, reasoning=False, num_predict=512)
 
 
-def investigate(incident: Incident, model: Any | None = None) -> Investigation:
+def investigate(incident: Incident, model: Any | None = None, runbook_context: list[dict[str, Any]] | None = None) -> Investigation:
     """Let the model select observations; execute them through an allowlisted dispatcher."""
     bound = (model if model is not None else make_model()).bind_tools(MODEL_TOOLS)
     messages = [
@@ -34,7 +34,11 @@ def investigate(incident: Incident, model: Any | None = None) -> Investigation:
             "Never claim production access. Do not issue corrective commands. "
             "If evidence is thin, state that it is insufficient."
         )),
-        HumanMessage(content=f"Investigate incident {incident.id}: {incident.title}. Symptom: {incident.symptom}"),
+        HumanMessage(content=(
+            f"Investigate incident {incident.id}: {incident.title}. Symptom: {incident.symptom}. "
+            + ("Retrieved runbooks (synthetic guidance, cite source IDs): " + json.dumps(runbook_context)
+               if runbook_context else "No relevant runbook was retrieved.")
+        )),
     ]
     results: list[ToolResult] = []
     for _ in range(4):

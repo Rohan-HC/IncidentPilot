@@ -1,8 +1,12 @@
+from functools import lru_cache
+from importlib.resources import files
+import os
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from incidentpilot.simulator import get_incident
+from incidentpilot.runbooks import RunbookIndex
 
 
 class GetMetrics(BaseModel):
@@ -30,13 +34,20 @@ class SearchRunbooks(BaseModel):
 
 
 MODEL_TOOLS = [GetMetrics, GetLogs, GetRecentDeployments, SearchRunbooks]
-_RUNBOOKS = [
-    {"id": "rb-db-pool", "title": "Database connection pool exhaustion", "summary": "Compare active connections to pool limit; inspect client leaks and timeouts."},
-    {"id": "rb-deploy", "title": "Faulty deployment", "summary": "Correlate the error increase with recent deployment and review the change."},
-]
+
+@lru_cache(maxsize=1)
+def get_default_runbook_index() -> RunbookIndex:
+    index = RunbookIndex(os.environ.get("INCIDENTPILOT_CHROMA_PATH", "data/chroma"))
+    directory = files("incidentpilot").joinpath("data", "runbooks")
+    for document in directory.iterdir():
+        if document.name.endswith(".md"):
+            content = document.read_text(encoding="utf-8")
+            title = content.splitlines()[0].removeprefix("# ")
+            index.index(document.name, title, content)
+    return index
 
 
-def dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
+def dispatch_tool(name: str, args: dict[str, Any], runbook_index: RunbookIndex | None = None) -> dict[str, Any]:
     """Execute only the four named, read-only local tools."""
     if name == "get_metrics":
         incident = get_incident(GetMetrics.model_validate(args).incident_id)
@@ -48,7 +59,6 @@ def dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         incident = get_incident(GetRecentDeployments.model_validate(args).incident_id)
         return {"deployments": incident.deployments}
     if name == "search_runbooks":
-        query = SearchRunbooks.model_validate(args).query.lower().split()
-        hits = [item for item in _RUNBOOKS if any(word in (item["title"] + " " + item["summary"]).lower() for word in query)]
-        return {"hits": hits}
+        query = SearchRunbooks.model_validate(args).query
+        return {"hits": (runbook_index or get_default_runbook_index()).search(query)}
     raise ValueError(f"Unknown tool: {name}")

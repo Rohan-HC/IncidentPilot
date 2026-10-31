@@ -47,3 +47,27 @@ def test_investigate_uses_injected_model():
     assert response.status_code == 200
     assert response.json()["answer"] == "Evidence is insufficient to recommend a change."
     assert response.json()["tool_results"] == []
+
+
+def test_model_connection_failure_returns_503(tmp_path):
+    import httpx
+
+    class OfflineModel:
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            raise httpx.ConnectError("Ollama is offline")
+
+    from incidentpilot.runbooks import RunbookIndex
+    from test_runbooks import TinyEncoder
+
+    index = RunbookIndex(tmp_path / "chroma", TinyEncoder())
+    client = TestClient(create_app(model=OfflineModel(), database_path=tmp_path / "state.db", runbook_index=index))
+
+    assert client.post("/incidents/db-pool-001/investigate").status_code == 503
+    analyzed = client.post("/incidents/db-pool-001/analyze")
+    assert analyzed.status_code == 200
+    assert analyzed.json()["evidence_status"] == "blocked"
+    assert analyzed.json()["proposal"] is None
+    assert client.get(f"/runs/{analyzed.json()['run_id']}").json()["evidence_status"] == "blocked"

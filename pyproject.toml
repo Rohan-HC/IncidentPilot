@@ -18,7 +18,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "httpx>=0.27,<1"]
 rag = ["chromadb>=1,<2", "sentence-transformers>=3,<6"]
-graph = ["langgraph>=1,<2"]
+graph = ["langgraph>=1,<2", "langgraph-checkpoint-sqlite>=3,<4"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+incidentpilot = ["data/runbooks/*.md"]

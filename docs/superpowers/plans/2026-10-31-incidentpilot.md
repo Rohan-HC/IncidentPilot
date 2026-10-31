@@ -40,17 +40,17 @@
 
 ### 3. Retrieval and workflow
 
-- [ ] Test runbook retrieval, including irrelevant and missing matches.
-- [ ] Add local embeddings/Chroma and LangGraph nodes with durable checkpointing.
-- [ ] Test evidence-limited and model-unavailable paths.
+- [x] Test runbook retrieval, including irrelevant and missing matches.
+- [x] Add local embeddings/Chroma and LangGraph nodes with durable checkpointing.
+- [x] Test evidence-limited and model-unavailable paths.
 
 ### 4. Approval and remediation
 
-- [ ] Test request, approval, denial, idempotent execution, and post-action verification across process restarts.
-- [ ] Implement SQLite policy/audit store and simulated actions.
-- [ ] Run the full suite.
+- [x] Test request, approval, denial, idempotent execution, and post-action verification across process restarts.
+- [x] Implement SQLite policy/audit store and simulated actions.
+- [x] Run the full suite.
 
 ### 5. Delivery
 
-- [ ] Add Docker, CI, and a truthful README with setup, architecture, demo commands, limitations, and interview talking points.
-- [ ] Run tests and local smoke checks, then review the diff.
+- [x] Add Docker, CI, and a truthful README with setup, architecture, demo commands, limitations, and interview talking points.
+- [x] Run tests and local smoke checks, then review the diff. Docker Compose configuration parsed; the image build awaits a running Docker engine.

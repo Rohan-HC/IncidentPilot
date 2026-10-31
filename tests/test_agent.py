@@ -24,7 +24,7 @@ class ScriptedModel:
 def test_default_model_disables_lengthy_thinking_mode():
     assert make_model().model == "qwen3:4b-instruct"
     assert make_model().reasoning is False
-    assert make_model().num_predict == 256
+    assert make_model().num_predict == 512
 
 
 def test_model_requests_tools_and_receives_actual_results():
