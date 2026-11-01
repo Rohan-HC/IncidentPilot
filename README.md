@@ -71,7 +71,7 @@ On 31 October 2026, a live `qwen3:4b-instruct` investigation of `db-pool-001` re
 - This is a single-user local demo. The `actor` field is self-declared, not authenticated. SQLite audit rows are durable but not tamper-evident. Do not expose the API to untrusted users.
 - Remediation and verification are fixed simulation outcomes. No database pool, deployment, or live service changes.
 - The rules and runbooks cover three examples, not a general incident response policy. The Chroma relevance threshold is a demo heuristic, not a calibrated retrieval evaluation.
-- Docker and CI are included; their execution should be checked in the target environment before claiming they pass. `docker compose config --quiet` passed locally, but Docker Desktop's engine was not running, so no image build was verified.
+- Docker Compose was verified locally: the image built successfully, the API returned 200 from `/health`, all three incidents were listed, and the container reached host Ollama. A complete database-pool analysis also produced a pending proposal; pre-approval execution returned 409, approval and simulated execution succeeded, verification was true, repeated execution was idempotent, and audit events persisted. CI configuration is included but still requires its first GitHub-hosted run.
 
 Suitable résumé language: **“Built a local simulated incident-response agent with Ollama tool calling, Chroma runbook retrieval, LangGraph/SQLite state, and approval-gated, idempotent simulated remediation.”**
 
