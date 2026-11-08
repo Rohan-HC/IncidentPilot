@@ -74,6 +74,27 @@ def test_same_run_cannot_create_two_proposals(tmp_path):
     assert len(store.audit(first["id"])) == 1
 
 
+def test_transition_aware_operations_distinguish_idempotent_replays(tmp_path):
+    store = ApprovalStore(tmp_path / "state.db")
+    proposal = store.create_proposal(
+        "replay-run", "db-pool-001", "increase_pool_limit", "sufficient"
+    )
+
+    approved, approval_changed = store.approve_with_transition(proposal["id"], "approver")
+    replayed_approval, replay_changed = store.approve_with_transition(proposal["id"], "approver")
+    executed, execution_changed = store.execute_with_transition(proposal["id"], "operator")
+    replayed_execution, execution_replay_changed = store.execute_with_transition(
+        proposal["id"], "operator"
+    )
+
+    assert approved == replayed_approval
+    assert approval_changed is True
+    assert replay_changed is False
+    assert executed == replayed_execution
+    assert execution_changed is True
+    assert execution_replay_changed is False
+
+
 def test_store_releases_sqlite_connections_on_windows():
     with tempfile.TemporaryDirectory() as directory:
         db = Path(directory) / "incidentpilot.db"

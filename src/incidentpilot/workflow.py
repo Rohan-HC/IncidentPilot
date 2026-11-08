@@ -149,6 +149,8 @@ def build_graph(
     runbook_index: Any | None = None,
     *,
     retry_policy: RetryPolicy | None = None,
+    tool_dispatcher: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+    interrupt_after: list[str] | None = None,
 ):
     policy = retry_policy or RetryPolicy()
 
@@ -209,7 +211,10 @@ def build_graph(
         try:
             result, retries = _with_retry(
                 lambda: investigate(
-                    get_incident(state["incident_id"]), model, state.get("runbook_hits", [])
+                    get_incident(state["incident_id"]),
+                    model,
+                    state.get("runbook_hits", []),
+                    **({"tool_dispatcher": tool_dispatcher} if tool_dispatcher is not None else {}),
                 ),
                 policy,
             )
@@ -255,4 +260,4 @@ def build_graph(
     builder.add_edge("retrieve", "observe")
     builder.add_edge("observe", "assess")
     builder.add_edge("assess", END)
-    return builder.compile(checkpointer=checkpointer)
+    return builder.compile(checkpointer=checkpointer, interrupt_after=interrupt_after)

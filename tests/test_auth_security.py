@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from incidentpilot.api import create_app
 from incidentpilot.approval import ApprovalStore
-from incidentpilot.auth import AuthService, Role, UserRecord
+from incidentpilot.auth import AuthConfig, AuthService, Role, UserRecord
 
 
 @pytest.fixture(scope="module")
@@ -44,6 +44,25 @@ def test_passwords_are_argon2_hashed_and_login_uses_verified_identity(auth_setup
     assert invalid.json()["detail"] == "Invalid credentials"
     assert valid.status_code == 200
     assert valid.json()["token_type"] == "bearer"
+
+
+def test_malformed_configured_password_hash_fails_authentication_safely(tmp_path):
+    config = AuthConfig(
+        secret="x" * 32,
+        users={
+            "operator": UserRecord(
+                username="operator", password_hash="not-an-argon-hash", role=Role.OPERATOR
+            )
+        },
+    )
+    client = TestClient(create_app(database_path=tmp_path / "state.db", auth_config=config))
+
+    response = client.post(
+        "/auth/token", json={"username": "operator", "password": "operator-password"}
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid credentials"
 
 
 def test_unauthenticated_and_wrong_role_approval_are_rejected(auth_setup, tmp_path):

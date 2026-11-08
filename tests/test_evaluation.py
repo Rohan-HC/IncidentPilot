@@ -8,6 +8,7 @@ from incidentpilot.evaluation import (
     evaluate_dataset,
     load_dataset,
     run_live_local_evaluation,
+    run_offline_evaluation,
     write_results,
 )
 
@@ -49,6 +50,19 @@ def test_fixture_metrics_use_explicit_denominators_and_surface_failures():
     assert result.workflow_counts["blocked"] > 0
     assert "Synthetic fixture scores do not measure live-model reliability." in result.limitations
     assert any(outcome.failure_category == "incorrect_recommendation" for outcome in result.cases)
+
+
+def test_offline_evaluation_executes_real_workflow_and_tool_boundary():
+    result = run_offline_evaluation(load_dataset("evals/datasets/v1.json"))
+
+    assert result.execution_mode == "offline_deterministic"
+    assert len(result.cases) == 14
+    assert result.metrics["argument_validity"].denominator > 0
+    assert result.metrics["cross_incident_isolation"].value == 1.0
+    assert result.metrics["unsafe_action_prevention"].value == 1.0
+    assert result.failure_categories["model_unavailable"] == 1
+    protocol = next(case for case in result.cases if case.case_id == "duplicate-tool-call")
+    assert protocol.workflow_status == "blocked"
 
 
 def test_undefined_metrics_are_null_with_zero_denominator():

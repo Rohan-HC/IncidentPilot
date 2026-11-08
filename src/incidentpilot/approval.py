@@ -132,14 +132,16 @@ class ApprovalStore:
         except sqlite3.Error:
             return False
 
-    def _decide(self, proposal_id: str, actor: str, status: str) -> dict[str, Any]:
+    def _decide_with_transition(
+        self, proposal_id: str, actor: str, status: str
+    ) -> tuple[dict[str, Any], bool]:
         if not actor.strip():
             raise ValueError("Actor is required for explicit approval or denial")
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = self._load(conn, proposal_id)
             if row["status"] == status:
-                return self._proposal(row)
+                return self._proposal(row), False
             if row["status"] != "pending":
                 raise ValueError("Proposal is no longer pending")
             conn.execute(
@@ -147,22 +149,31 @@ class ApprovalStore:
                 (status, actor, proposal_id),
             )
             self._audit(conn, proposal_id, status, actor)
-            return self._proposal(self._load(conn, proposal_id))
+            return self._proposal(self._load(conn, proposal_id)), True
 
     def approve(self, proposal_id: str, actor: str) -> dict[str, Any]:
-        return self._decide(proposal_id, actor, "approved")
+        return self.approve_with_transition(proposal_id, actor)[0]
+
+    def approve_with_transition(self, proposal_id: str, actor: str) -> tuple[dict[str, Any], bool]:
+        return self._decide_with_transition(proposal_id, actor, "approved")
 
     def deny(self, proposal_id: str, actor: str) -> dict[str, Any]:
-        return self._decide(proposal_id, actor, "denied")
+        return self.deny_with_transition(proposal_id, actor)[0]
+
+    def deny_with_transition(self, proposal_id: str, actor: str) -> tuple[dict[str, Any], bool]:
+        return self._decide_with_transition(proposal_id, actor, "denied")
 
     def execute(self, proposal_id: str, actor: str) -> dict[str, Any]:
+        return self.execute_with_transition(proposal_id, actor)[0]
+
+    def execute_with_transition(self, proposal_id: str, actor: str) -> tuple[dict[str, Any], bool]:
         if not actor.strip():
             raise ValueError("Actor is required for execution")
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = self._load(conn, proposal_id)
             if row["status"] == "executed":
-                return json.loads(row["result_json"])
+                return json.loads(row["result_json"]), False
             if row["status"] != "approved":
                 raise ValueError("Proposal must be approved before execution")
             result = _simulate(row["incident_id"], row["action"])
@@ -171,7 +182,7 @@ class ApprovalStore:
                 (json.dumps(result), proposal_id),
             )
             self._audit(conn, proposal_id, "executed", actor, result)
-            return result
+            return result, True
 
     def audit(self, proposal_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:

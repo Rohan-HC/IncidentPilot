@@ -1,3 +1,5 @@
+from uuid import NAMESPACE_URL, uuid5
+
 import httpx
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
@@ -153,3 +155,63 @@ def test_api_idempotency_key_replays_without_duplicate_proposal(
     assert first.json()["run_id"] == second.json()["run_id"]
     assert first.json()["proposal"]["id"] == second.json()["proposal"]["id"]
     assert len(model.seen) == 2
+
+
+def test_api_resumes_nonterminal_checkpoint_without_repeating_retrieval(
+    tmp_path, auth_config, auth_headers
+):
+    class CountingIndex:
+        calls = 0
+
+        def search(self, query):
+            self.calls += 1
+            return [
+                {
+                    "source": "db-pool.md",
+                    "title": "Database pool",
+                    "text": "Check pool saturation.",
+                    "distance": 0.0,
+                }
+            ]
+
+    key = "resume-interrupted"
+    run_id = str(uuid5(NAMESPACE_URL, f"incidentpilot:db-pool-001:{key}"))
+    database = tmp_path / "state.db"
+    index = CountingIndex()
+    model = ScriptedModel([AIMessage(content="Evidence remains partial.")])
+    config = {"configurable": {"thread_id": run_id}}
+    with SqliteSaver.from_conn_string(str(database)) as saver:
+        interrupted = build_graph(
+            model,
+            saver,
+            runbook_index=index,
+            interrupt_after=["retrieve"],
+        ).invoke(
+            {"incident_id": "db-pool-001", "status": "pending", "transitions": []},
+            config,
+        )
+
+    assert interrupted["status"] == "running"
+    assert index.calls == 1
+    client = TestClient(
+        create_app(
+            model=model,
+            database_path=database,
+            runbook_index=index,
+            auth_config=auth_config,
+        )
+    )
+
+    resumed = client.post(
+        "/incidents/db-pool-001/analyze",
+        headers={**auth_headers(client), "Idempotency-Key": key},
+    )
+
+    assert resumed.status_code == 200
+    assert resumed.json()["status"] == "insufficient_evidence"
+    assert resumed.json()["transitions"] == [
+        "pending->running",
+        "running->insufficient_evidence",
+    ]
+    assert index.calls == 1
+    assert len(model.seen) == 1

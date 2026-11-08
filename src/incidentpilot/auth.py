@@ -71,6 +71,7 @@ class AuthService:
 
     def __init__(self, config: AuthConfig | None):
         self.config = config
+        self._dummy_hash = self._password_hash.hash(secrets.token_urlsafe(16))
 
     @classmethod
     def from_env(cls) -> AuthService:
@@ -98,12 +99,12 @@ class AuthService:
         if self.config is None:
             return None
         user = self.config.users.get(username)
-        if user is None:
-            self._password_hash.verify(
-                password, self._password_hash.hash(secrets.token_urlsafe(16))
-            )
+        candidate_hash = user.password_hash if user is not None else self._dummy_hash
+        try:
+            verified = self._password_hash.verify(password, candidate_hash)
+        except Exception:
             return None
-        if not self._password_hash.verify(password, user.password_hash):
+        if user is None or not verified:
             return None
         return user
 

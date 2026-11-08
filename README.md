@@ -93,6 +93,12 @@ failure, and incorrect recommendations.
 
 ```powershell
 .\.venv\Scripts\python -m incidentpilot.evaluation `
+  --mode offline_deterministic `
+  --dataset evals/datasets/v1.json `
+  --output evals/results/local-offline.json
+
+# Scorer-validation fixtures (pre-recorded observations):
+.\.venv\Scripts\python -m incidentpilot.evaluation `
   --mode synthetic_fixture `
   --dataset evals/datasets/v1.json `
   --output evals/results/local-fixture.json
@@ -135,7 +141,9 @@ docker compose up --build
 ## Operational endpoints
 
 - `GET /health/live`: process liveness; no dependency checks.
-- `GET /health/ready`: SQLite and authentication readiness.
+- `GET /health/ready`: control-plane readiness for SQLite and authentication. Ollama and
+  runbook availability are checked by investigation execution and reported through its failure
+  category; they are not startup-routing dependencies for read-only control endpoints.
 - `GET /ops/metrics`: authenticated local counters.
 - Every response includes `X-Correlation-ID`; callers may supply a safe ID in the request.
 - JSON logs include correlation/investigation IDs, durations, transitions, and safe failure

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
@@ -172,6 +173,7 @@ def investigate(
     runbook_context: list[dict[str, Any]] | None = None,
     *,
     limits: AgentLimits | None = None,
+    tool_dispatcher: Callable[[str, dict[str, Any]], dict[str, Any]] = dispatch_tool,
 ) -> Investigation:
     """Run a bounded read-only investigation and fail closed on protocol errors."""
     limits = limits or AgentLimits()
@@ -311,7 +313,7 @@ def investigate(
         for call_id, name, args in validated_calls:
             tool_started = monotonic()
             try:
-                output = dispatch_tool(name, args)
+                output = tool_dispatcher(name, args)
                 result = ToolResult(
                     name=name,
                     call_id=call_id,

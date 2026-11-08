@@ -128,7 +128,11 @@ def create_app(
             "authentication": "ok" if auth.config is not None else "unavailable",
         }
         ready_status = all(value == "ok" for value in dependencies.values())
-        payload = {"status": "ready" if ready_status else "not_ready", "dependencies": dependencies}
+        payload = {
+            "status": "ready" if ready_status else "not_ready",
+            "scope": "control_plane",
+            "dependencies": dependencies,
+        }
         return payload if ready_status else JSONResponse(status_code=503, content=payload)
 
     @app.post("/auth/token")
@@ -201,13 +205,22 @@ def create_app(
                 graph = build_graph(model, saver, runbook_index)
                 config = {"configurable": {"thread_id": run_id}}
                 checkpoint = graph.get_state(config)
-                if checkpoint.values and checkpoint.values.get("status") in {
+                terminal_statuses = {
                     "completed",
                     "insufficient_evidence",
                     "blocked",
                     "failed",
+                }
+                if checkpoint.values and checkpoint.values.get("status") in {
+                    *terminal_statuses,
                 }:
                     state = checkpoint.values
+                elif checkpoint.values:
+                    if checkpoint.values.get("incident_id") != incident_id:
+                        raise HTTPException(status_code=409, detail="Checkpoint state conflict")
+                    if not checkpoint.next:
+                        raise HTTPException(status_code=409, detail="Checkpoint cannot be resumed")
+                    state = graph.invoke(None, config)
                 else:
                     state = graph.invoke(
                         {
@@ -259,9 +272,10 @@ def create_app(
     ) -> dict[str, Any]:
         proposal_or_404(proposal_id)
         try:
-            result = store.approve(proposal_id, user.username)
-            COUNTERS.increment("proposals_approved_total")
-            log_event(logger, "proposal_approved", proposal_id=proposal_id, actor=user.username)
+            result, changed = store.approve_with_transition(proposal_id, user.username)
+            if changed:
+                COUNTERS.increment("proposals_approved_total")
+                log_event(logger, "proposal_approved", proposal_id=proposal_id, actor=user.username)
             return result
         except ValueError as exc:
             raise HTTPException(status_code=409, detail="Proposal state conflict") from exc
@@ -273,9 +287,10 @@ def create_app(
     ) -> dict[str, Any]:
         proposal_or_404(proposal_id)
         try:
-            result = store.deny(proposal_id, user.username)
-            COUNTERS.increment("proposals_denied_total")
-            log_event(logger, "proposal_denied", proposal_id=proposal_id, actor=user.username)
+            result, changed = store.deny_with_transition(proposal_id, user.username)
+            if changed:
+                COUNTERS.increment("proposals_denied_total")
+                log_event(logger, "proposal_denied", proposal_id=proposal_id, actor=user.username)
             return result
         except ValueError as exc:
             raise HTTPException(status_code=409, detail="Proposal state conflict") from exc
@@ -287,15 +302,16 @@ def create_app(
     ) -> dict[str, Any]:
         proposal_or_404(proposal_id)
         try:
-            result = store.execute(proposal_id, user.username)
-            COUNTERS.increment("simulated_executions_total")
-            log_event(
-                logger,
-                "simulated_action_executed",
-                proposal_id=proposal_id,
-                actor=user.username,
-                verified=result["verified"],
-            )
+            result, changed = store.execute_with_transition(proposal_id, user.username)
+            if changed:
+                COUNTERS.increment("simulated_executions_total")
+                log_event(
+                    logger,
+                    "simulated_action_executed",
+                    proposal_id=proposal_id,
+                    actor=user.username,
+                    verified=result["verified"],
+                )
             return result
         except ValueError as exc:
             raise HTTPException(status_code=409, detail="Proposal state conflict") from exc
