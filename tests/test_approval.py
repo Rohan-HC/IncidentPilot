@@ -11,12 +11,12 @@ def test_execution_requires_explicit_approval_and_is_idempotent(tmp_path):
     proposal = store.create_proposal("run-db", "db-pool-001", "increase_pool_limit", "sufficient")
 
     with pytest.raises(ValueError, match="approved"):
-        store.execute(proposal["id"])
+        store.execute(proposal["id"], "operator@example.test")
 
     store.approve(proposal["id"], actor="operator@example.test")
-    first = store.execute(proposal["id"])
+    first = store.execute(proposal["id"], "operator@example.test")
     reopened = ApprovalStore(db)
-    second = reopened.execute(proposal["id"])
+    second = reopened.execute(proposal["id"], "operator@example.test")
 
     assert first == second
     assert first["simulated"] is True
@@ -33,7 +33,7 @@ def test_denial_blocks_execution(tmp_path):
     store.deny(proposal["id"], actor="operator@example.test")
 
     with pytest.raises(ValueError, match="approved"):
-        store.execute(proposal["id"])
+        store.execute(proposal["id"], "operator@example.test")
     assert store.get_proposal(proposal["id"])["status"] == "denied"
 
 
@@ -42,7 +42,7 @@ def test_approved_deployment_rollback_verifies_synthetic_error_rate(tmp_path):
     proposal = store.create_proposal("run-deploy", "deploy-001", "rollback_deployment", "sufficient")
     store.approve(proposal["id"], actor="operator@example.test")
 
-    result = store.execute(proposal["id"])
+    result = store.execute(proposal["id"], "operator@example.test")
 
     assert result["after"]["version"] == "v2.4.0"
     assert result["after"]["error_rate_percent"] < result["before"]["error_rate_percent"]

@@ -124,7 +124,9 @@ class ApprovalStore:
     def deny(self, proposal_id: str, actor: str) -> dict[str, Any]:
         return self._decide(proposal_id, actor, "denied")
 
-    def execute(self, proposal_id: str) -> dict[str, Any]:
+    def execute(self, proposal_id: str, actor: str) -> dict[str, Any]:
+        if not actor.strip():
+            raise ValueError("Actor is required for execution")
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = self._load(conn, proposal_id)
@@ -137,7 +139,7 @@ class ApprovalStore:
                 "UPDATE proposals SET status = 'executed', result_json = ? WHERE id = ?",
                 (json.dumps(result), proposal_id),
             )
-            self._audit(conn, proposal_id, "executed", row["actor"], result)
+            self._audit(conn, proposal_id, "executed", actor, result)
             return result
 
     def audit(self, proposal_id: str) -> list[dict[str, Any]]:

@@ -116,7 +116,7 @@ def test_completed_checkpoint_restores_validated_terminal_state(tmp_path):
     assert restored["transitions"][-1] == "running->insufficient_evidence"
 
 
-def test_api_idempotency_key_replays_without_duplicate_proposal(tmp_path):
+def test_api_idempotency_key_replays_without_duplicate_proposal(tmp_path, auth_config, auth_headers):
     model = ScriptedModel([
         AIMessage(content="", tool_calls=[
             {"name": "get_metrics", "args": {"incident_id": "db-pool-001"}, "id": "m"},
@@ -128,8 +128,9 @@ def test_api_idempotency_key_replays_without_duplicate_proposal(tmp_path):
         model=model,
         database_path=tmp_path / "state.db",
         runbook_index=runbooks(tmp_path),
+        auth_config=auth_config,
     ))
-    headers = {"Idempotency-Key": "db-pool-demo"}
+    headers = {**auth_headers(client), "Idempotency-Key": "db-pool-demo"}
 
     first = client.post("/incidents/db-pool-001/analyze", headers=headers)
     second = client.post("/incidents/db-pool-001/analyze", headers=headers)

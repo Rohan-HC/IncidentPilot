@@ -31,7 +31,7 @@ def test_incident_exposes_synthetic_evidence():
     assert response.json()["simulated"] is True
 
 
-def test_investigate_uses_injected_model():
+def test_investigate_uses_injected_model(auth_config, auth_headers):
     from langchain_core.messages import AIMessage
 
     class Model:
@@ -41,15 +41,15 @@ def test_investigate_uses_injected_model():
         def invoke(self, messages):
             return AIMessage(content="Evidence is insufficient to recommend a change.")
 
-    client = TestClient(create_app(model=Model()))
-    response = client.post("/incidents/unknown-001/investigate")
+    client = TestClient(create_app(model=Model(), auth_config=auth_config))
+    response = client.post("/incidents/unknown-001/investigate", headers=auth_headers(client))
 
     assert response.status_code == 200
     assert response.json()["answer"] == "Evidence is insufficient to recommend a change."
     assert response.json()["tool_results"] == []
 
 
-def test_model_connection_failure_returns_503(tmp_path):
+def test_model_connection_failure_returns_503(tmp_path, auth_config, auth_headers):
     import httpx
 
     class OfflineModel:
@@ -63,11 +63,15 @@ def test_model_connection_failure_returns_503(tmp_path):
     from test_runbooks import TinyEncoder
 
     index = RunbookIndex(tmp_path / "chroma", TinyEncoder())
-    client = TestClient(create_app(model=OfflineModel(), database_path=tmp_path / "state.db", runbook_index=index))
+    client = TestClient(create_app(
+        model=OfflineModel(), database_path=tmp_path / "state.db", runbook_index=index,
+        auth_config=auth_config,
+    ))
+    headers = auth_headers(client)
 
-    assert client.post("/incidents/db-pool-001/investigate").status_code == 503
-    analyzed = client.post("/incidents/db-pool-001/analyze")
+    assert client.post("/incidents/db-pool-001/investigate", headers=headers).status_code == 503
+    analyzed = client.post("/incidents/db-pool-001/analyze", headers=headers)
     assert analyzed.status_code == 200
     assert analyzed.json()["evidence_status"] == "blocked"
     assert analyzed.json()["proposal"] is None
-    assert client.get(f"/runs/{analyzed.json()['run_id']}").json()["evidence_status"] == "blocked"
+    assert client.get(f"/runs/{analyzed.json()['run_id']}", headers=headers).json()["evidence_status"] == "blocked"
