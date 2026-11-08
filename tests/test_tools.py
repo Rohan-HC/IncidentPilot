@@ -1,10 +1,9 @@
 import pytest
-
-from incidentpilot.simulator import get_incident
-from incidentpilot.runbooks import RunbookIndex
-from incidentpilot.tools import dispatch_tool
-
 from test_runbooks import TinyEncoder
+
+from incidentpilot.runbooks import RunbookIndex
+from incidentpilot.simulator import get_incident
+from incidentpilot.tools import dispatch_tool
 
 
 def test_read_only_tools_return_scenario_evidence(tmp_path):
@@ -15,7 +14,9 @@ def test_read_only_tools_return_scenario_evidence(tmp_path):
     metrics = dispatch_tool("get_metrics", {"incident_id": incident.id})
     logs = dispatch_tool("get_logs", {"incident_id": incident.id})
     deployments = dispatch_tool("get_recent_deployments", {"incident_id": incident.id})
-    runbooks = dispatch_tool("search_runbooks", {"query": "database connection pool"}, runbook_index=index)
+    runbooks = dispatch_tool(
+        "search_runbooks", {"query": "database connection pool"}, runbook_index=index
+    )
 
     assert metrics["active_connections"] == 100
     assert any("pool" in line.lower() for line in logs["lines"])

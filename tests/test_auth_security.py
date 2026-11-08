@@ -4,18 +4,20 @@ from datetime import timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from incidentpilot.approval import ApprovalStore
-from incidentpilot.auth import AuthConfig, AuthService, Role, UserRecord
 from incidentpilot.api import create_app
+from incidentpilot.approval import ApprovalStore
+from incidentpilot.auth import AuthService, Role, UserRecord
 
 
 @pytest.fixture(scope="module")
 def auth_setup():
-    service = AuthService.for_testing({
-        "viewer": ("viewer-password", Role.VIEWER),
-        "operator": ("operator-password", Role.OPERATOR),
-        "approver": ("approver-password", Role.APPROVER),
-    })
+    service = AuthService.for_testing(
+        {
+            "viewer": ("viewer-password", Role.VIEWER),
+            "operator": ("operator-password", Role.OPERATOR),
+            "approver": ("approver-password", Role.APPROVER),
+        }
+    )
     return service.config
 
 
@@ -34,7 +36,9 @@ def test_passwords_are_argon2_hashed_and_login_uses_verified_identity(auth_setup
     client = TestClient(create_app(database_path=tmp_path / "state.db", auth_config=auth_setup))
 
     invalid = client.post("/auth/token", json={"username": "approver", "password": "wrong"})
-    valid = client.post("/auth/token", json={"username": "approver", "password": "approver-password"})
+    valid = client.post(
+        "/auth/token", json={"username": "approver", "password": "approver-password"}
+    )
 
     assert invalid.status_code == 401
     assert invalid.json()["detail"] == "Invalid credentials"
@@ -72,13 +76,22 @@ def test_actor_is_derived_from_token_and_client_forgery_is_ignored(auth_setup, t
 def test_invalid_and_expired_tokens_are_rejected(auth_setup, tmp_path):
     service = AuthService(auth_setup)
     expired = service.issue_token(
-        UserRecord(username="viewer", password_hash=auth_setup.users["viewer"].password_hash, role=Role.VIEWER),
+        UserRecord(
+            username="viewer",
+            password_hash=auth_setup.users["viewer"].password_hash,
+            role=Role.VIEWER,
+        ),
         expires_delta=timedelta(seconds=-1),
     )
     client = TestClient(create_app(database_path=tmp_path / "state.db", auth_config=auth_setup))
 
-    assert client.get("/runs/missing", headers={"Authorization": "Bearer forged"}).status_code == 401
-    assert client.get("/runs/missing", headers={"Authorization": f"Bearer {expired}"}).status_code == 401
+    assert (
+        client.get("/runs/missing", headers={"Authorization": "Bearer forged"}).status_code == 401
+    )
+    assert (
+        client.get("/runs/missing", headers={"Authorization": f"Bearer {expired}"}).status_code
+        == 401
+    )
 
 
 def test_investigation_and_audit_require_authorized_access(auth_setup, tmp_path):
@@ -110,7 +123,7 @@ def test_concurrent_approval_and_denial_allow_one_terminal_decision(tmp_path):
 
     def decide(action):
         try:
-            return action(proposal["id"], "approver")['status']
+            return action(proposal["id"], "approver")["status"]
         except ValueError:
             return "conflict"
 
@@ -119,7 +132,8 @@ def test_concurrent_approval_and_denial_allow_one_terminal_decision(tmp_path):
 
     assert sorted(outcomes) in (["approved", "conflict"], ["conflict", "denied"])
     assert [event["event"] for event in store.audit(proposal["id"])] in (
-        ["proposed", "approved"], ["proposed", "denied"]
+        ["proposed", "approved"],
+        ["proposed", "denied"],
     )
 
 

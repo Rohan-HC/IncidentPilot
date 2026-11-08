@@ -5,6 +5,7 @@ __pycache__/
 *.egg-info/
 *.db
 data/chroma/
+data/runbooks.db
 tmp/
 output/
 evals/results/

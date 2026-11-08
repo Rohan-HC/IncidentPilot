@@ -5,11 +5,13 @@ from incidentpilot.auth import AuthService, Role
 
 @pytest.fixture(scope="session")
 def auth_config():
-    return AuthService.for_testing({
-        "test-viewer": ("viewer-test-password", Role.VIEWER),
-        "test-operator": ("operator-test-password", Role.OPERATOR),
-        "test-approver": ("approver-test-password", Role.APPROVER),
-    }).config
+    return AuthService.for_testing(
+        {
+            "test-viewer": ("viewer-test-password", Role.VIEWER),
+            "test-operator": ("operator-test-password", Role.OPERATOR),
+            "test-approver": ("approver-test-password", Role.APPROVER),
+        }
+    ).config
 
 
 @pytest.fixture

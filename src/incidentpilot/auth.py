@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from enum import StrEnum
 import json
 import os
 import secrets
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from typing import Any
 
 import jwt
@@ -99,18 +99,18 @@ class AuthService:
             return None
         user = self.config.users.get(username)
         if user is None:
-            self._password_hash.verify(password, self._password_hash.hash(secrets.token_urlsafe(16)))
+            self._password_hash.verify(
+                password, self._password_hash.hash(secrets.token_urlsafe(16))
+            )
             return None
         if not self._password_hash.verify(password, user.password_hash):
             return None
         return user
 
-    def issue_token(
-        self, user: UserRecord, *, expires_delta: timedelta | None = None
-    ) -> str:
+    def issue_token(self, user: UserRecord, *, expires_delta: timedelta | None = None) -> str:
         if self.config is None:
             raise RuntimeError("Authentication is not configured")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         expires = now + (expires_delta or timedelta(seconds=self.config.token_ttl_seconds))
         return jwt.encode(
             {

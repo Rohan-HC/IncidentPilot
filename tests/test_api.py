@@ -9,9 +9,7 @@ def test_lists_three_simulated_incidents():
     response = client.get("/incidents")
 
     assert response.status_code == 200
-    assert {item["id"] for item in response.json()} == {
-        "db-pool-001", "deploy-001", "unknown-001"
-    }
+    assert {item["id"] for item in response.json()} == {"db-pool-001", "deploy-001", "unknown-001"}
     assert all(item["simulated"] is True for item in response.json())
 
 
@@ -59,14 +57,19 @@ def test_model_connection_failure_returns_503(tmp_path, auth_config, auth_header
         def invoke(self, messages):
             raise httpx.ConnectError("Ollama is offline")
 
-    from incidentpilot.runbooks import RunbookIndex
     from test_runbooks import TinyEncoder
 
+    from incidentpilot.runbooks import RunbookIndex
+
     index = RunbookIndex(tmp_path / "chroma", TinyEncoder())
-    client = TestClient(create_app(
-        model=OfflineModel(), database_path=tmp_path / "state.db", runbook_index=index,
-        auth_config=auth_config,
-    ))
+    client = TestClient(
+        create_app(
+            model=OfflineModel(),
+            database_path=tmp_path / "state.db",
+            runbook_index=index,
+            auth_config=auth_config,
+        )
+    )
     headers = auth_headers(client)
 
     assert client.post("/incidents/db-pool-001/investigate", headers=headers).status_code == 503
@@ -74,4 +77,7 @@ def test_model_connection_failure_returns_503(tmp_path, auth_config, auth_header
     assert analyzed.status_code == 200
     assert analyzed.json()["evidence_status"] == "blocked"
     assert analyzed.json()["proposal"] is None
-    assert client.get(f"/runs/{analyzed.json()['run_id']}", headers=headers).json()["evidence_status"] == "blocked"
+    assert (
+        client.get(f"/runs/{analyzed.json()['run_id']}", headers=headers).json()["evidence_status"]
+        == "blocked"
+    )

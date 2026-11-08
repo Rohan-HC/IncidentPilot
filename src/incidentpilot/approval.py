@@ -1,13 +1,12 @@
 """Durable approval and audit boundary for simulated actions only."""
 
 import json
-from contextlib import contextmanager
-from pathlib import Path
 import sqlite3
-from datetime import datetime, timezone
-from uuid import uuid4
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
-
+from uuid import uuid4
 
 ALLOWED_ACTIONS = {
     ("db-pool-001", "increase_pool_limit"),
@@ -16,21 +15,33 @@ ALLOWED_ACTIONS = {
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _simulate(incident_id: str, action: str) -> dict[str, Any]:
     if (incident_id, action) == ("db-pool-001", "increase_pool_limit"):
         before = {"active_connections": 100, "pool_limit": 100, "p95_latency_ms": 2400}
         after = {"active_connections": 80, "pool_limit": 120, "p95_latency_ms": 350}
-        verified = after["active_connections"] < after["pool_limit"] and after["p95_latency_ms"] < before["p95_latency_ms"]
+        verified = (
+            after["active_connections"] < after["pool_limit"]
+            and after["p95_latency_ms"] < before["p95_latency_ms"]
+        )
     elif (incident_id, action) == ("deploy-001", "rollback_deployment"):
         before = {"version": "v2.4.1", "error_rate_percent": 18.0}
         after = {"version": "v2.4.0", "error_rate_percent": 1.2}
-        verified = after["version"] == "v2.4.0" and after["error_rate_percent"] < before["error_rate_percent"]
+        verified = (
+            after["version"] == "v2.4.0"
+            and after["error_rate_percent"] < before["error_rate_percent"]
+        )
     else:
         raise ValueError("Action is not allowlisted")
-    return {"simulated": True, "action": action, "before": before, "after": after, "verified": verified}
+    return {
+        "simulated": True,
+        "action": action,
+        "before": before,
+        "after": after,
+        "verified": verified,
+    }
 
 
 class ApprovalStore:
@@ -73,14 +84,18 @@ class ApprovalStore:
             raise KeyError(proposal_id)
         return row
 
-    def create_proposal(self, run_id: str, incident_id: str, action: str, evidence_status: str) -> dict[str, Any]:
+    def create_proposal(
+        self, run_id: str, incident_id: str, action: str, evidence_status: str
+    ) -> dict[str, Any]:
         if (incident_id, action) not in ALLOWED_ACTIONS:
             raise ValueError("Action is not allowlisted for this incident")
         if evidence_status != "sufficient":
             raise ValueError("Insufficient evidence for a proposal")
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            existing = conn.execute("SELECT * FROM proposals WHERE run_id = ?", (run_id,)).fetchone()
+            existing = conn.execute(
+                "SELECT * FROM proposals WHERE run_id = ?", (run_id,)
+            ).fetchone()
             if existing:
                 if (existing["incident_id"], existing["action"]) != (incident_id, action):
                     raise ValueError("Run already has a different proposal")
@@ -94,7 +109,13 @@ class ApprovalStore:
             return self._proposal(self._load(conn, proposal_id))
 
     @staticmethod
-    def _audit(conn: sqlite3.Connection, proposal_id: str, event: str, actor: str | None = None, detail: dict | None = None) -> None:
+    def _audit(
+        conn: sqlite3.Connection,
+        proposal_id: str,
+        event: str,
+        actor: str | None = None,
+        detail: dict | None = None,
+    ) -> None:
         conn.execute(
             "INSERT INTO audit (proposal_id, event, actor, at, detail_json) VALUES (?, ?, ?, ?, ?)",
             (proposal_id, event, actor, _now(), json.dumps(detail) if detail is not None else None),
@@ -121,7 +142,10 @@ class ApprovalStore:
                 return self._proposal(row)
             if row["status"] != "pending":
                 raise ValueError("Proposal is no longer pending")
-            conn.execute("UPDATE proposals SET status = ?, actor = ? WHERE id = ?", (status, actor, proposal_id))
+            conn.execute(
+                "UPDATE proposals SET status = ?, actor = ? WHERE id = ?",
+                (status, actor, proposal_id),
+            )
             self._audit(conn, proposal_id, status, actor)
             return self._proposal(self._load(conn, proposal_id))
 
@@ -152,5 +176,7 @@ class ApprovalStore:
     def audit(self, proposal_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
             self._load(conn, proposal_id)
-            rows = conn.execute("SELECT * FROM audit WHERE proposal_id = ? ORDER BY id", (proposal_id,)).fetchall()
+            rows = conn.execute(
+                "SELECT * FROM audit WHERE proposal_id = ? ORDER BY id", (proposal_id,)
+            ).fetchall()
             return [dict(row) for row in rows]

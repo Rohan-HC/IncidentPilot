@@ -32,16 +32,33 @@ class ScriptedModel:
 @pytest.mark.parametrize(
     ("call", "error_code"),
     [
-        ({"name": "delete_database", "args": {"incident_id": "db-pool-001"}, "id": "x"}, "unknown_tool"),
+        (
+            {"name": "delete_database", "args": {"incident_id": "db-pool-001"}, "id": "x"},
+            "unknown_tool",
+        ),
         ({"name": "get_metrics", "args": {}, "id": "x"}, "invalid_arguments"),
         ({"name": "get_metrics", "args": {"incident_id": 7}, "id": "x"}, "invalid_arguments"),
-        ({"name": "get_metrics", "args": {"incident_id": "deploy-001"}, "id": "x"}, "incident_mismatch"),
+        (
+            {"name": "get_metrics", "args": {"incident_id": "deploy-001"}, "id": "x"},
+            "incident_mismatch",
+        ),
         ({"name": "get_metrics", "args": None, "id": "x"}, "invalid_arguments"),
-        ({"name": "get_metrics", "args": {"incident_id": "db-pool-001", "command": "rm -rf /"}, "id": "x"}, "invalid_arguments"),
+        (
+            {
+                "name": "get_metrics",
+                "args": {"incident_id": "db-pool-001", "command": "rm -rf /"},
+                "id": "x",
+            },
+            "invalid_arguments",
+        ),
     ],
 )
 def test_invalid_tool_calls_block_investigation(call, error_code):
-    first = RawReply(tool_calls=[call]) if call.get("args") is None else AIMessage(content="", tool_calls=[call])
+    first = (
+        RawReply(tool_calls=[call])
+        if call.get("args") is None
+        else AIMessage(content="", tool_calls=[call])
+    )
     model = ScriptedModel([first, AIMessage(content="Tool request rejected.")])
 
     result = investigate(get_incident("db-pool-001"), model)
@@ -52,9 +69,9 @@ def test_invalid_tool_calls_block_investigation(call, error_code):
 
 
 def test_missing_tool_call_id_blocks_without_inventing_protocol_identifier():
-    model = ScriptedModel([RawReply(tool_calls=[{
-        "name": "get_metrics", "args": {"incident_id": "db-pool-001"}
-    }])])
+    model = ScriptedModel(
+        [RawReply(tool_calls=[{"name": "get_metrics", "args": {"incident_id": "db-pool-001"}}])]
+    )
 
     result = investigate(get_incident("db-pool-001"), model)
 
@@ -86,12 +103,17 @@ def test_unexpected_model_response_shapes_block(reply):
 
 
 def test_tool_call_id_is_preserved_on_result_and_tool_message():
-    model = ScriptedModel([
-        AIMessage(content="", tool_calls=[{
-            "name": "get_metrics", "args": {"incident_id": "db-pool-001"}, "id": "call-42"
-        }]),
-        AIMessage(content="Sufficient observations collected."),
-    ])
+    model = ScriptedModel(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "get_metrics", "args": {"incident_id": "db-pool-001"}, "id": "call-42"}
+                ],
+            ),
+            AIMessage(content="Sufficient observations collected."),
+        ]
+    )
 
     result = investigate(get_incident("db-pool-001"), model)
 
@@ -156,4 +178,3 @@ def test_round_limit_blocks_incomplete_protocol():
 
     assert result.status == "blocked"
     assert result.error_category == "limit_exceeded"
-

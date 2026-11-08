@@ -6,17 +6,23 @@ class TinyEncoder:
         vectors = []
         for text in texts:
             lower = text.lower()
-            vectors.append([
-                float("database" in lower or "pool" in lower),
-                float("deployment" in lower or "rollback" in lower),
-                float("unrelated" in lower),
-            ])
+            vectors.append(
+                [
+                    float("database" in lower or "pool" in lower),
+                    float("deployment" in lower or "rollback" in lower),
+                    float("unrelated" in lower),
+                ]
+            )
         return vectors
 
 
 def test_persistent_runbook_search_cites_source(tmp_path):
     first = RunbookIndex(tmp_path / "chroma", TinyEncoder())
-    first.index("db-pool", "Database pool", "Check active connections and pool limit before changing configuration.")
+    first.index(
+        "db-pool",
+        "Database pool",
+        "Check active connections and pool limit before changing configuration.",
+    )
 
     reopened = RunbookIndex(tmp_path / "chroma", TinyEncoder())
     hits = reopened.search("database pool")

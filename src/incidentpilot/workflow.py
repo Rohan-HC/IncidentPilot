@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 from time import perf_counter, sleep
-from typing import Any, Callable, Literal, TypedDict, TypeVar
+from typing import Any, Literal, TypedDict, TypeVar
 
 import httpx
 from langgraph.graph import END, START, StateGraph
@@ -15,7 +16,6 @@ from incidentpilot.agent import investigate
 from incidentpilot.observability import COUNTERS, log_event
 from incidentpilot.simulator import get_incident
 from incidentpilot.tools import get_default_runbook_index
-
 
 InvestigationStatus = Literal[
     "pending", "running", "completed", "insufficient_evidence", "blocked", "failed"
@@ -59,12 +59,12 @@ def _with_retry(operation: Callable[[], T], policy: RetryPolicy) -> tuple[T, int
     for attempt in range(policy.max_attempts):
         try:
             return operation(), retries
-        except _TRANSIENT_ERRORS as exc:
+        except _TRANSIENT_ERRORS:
             if attempt + 1 >= policy.max_attempts:
                 raise
             retries += 1
             if policy.backoff_seconds:
-                sleep(policy.backoff_seconds * (2 ** attempt))
+                sleep(policy.backoff_seconds * (2**attempt))
     raise RuntimeError("retry loop exhausted")
 
 
@@ -113,9 +113,7 @@ def assess_evidence(state: IncidentState) -> IncidentState:
     metrics = _observation(state, "get_metrics")
     logs = _observation(state, "get_logs").get("lines", [])
     deployments = _observation(state, "get_recent_deployments").get("deployments", [])
-    sources = {
-        hit.get("source") for hit in state.get("runbook_hits", []) if isinstance(hit, dict)
-    }
+    sources = {hit.get("source") for hit in state.get("runbook_hits", []) if isinstance(hit, dict)}
     if state["incident_id"] == "db-pool-001":
         sufficient = (
             metrics.get("active_connections", -1) >= metrics.get("pool_limit", float("inf"))
@@ -127,7 +125,9 @@ def assess_evidence(state: IncidentState) -> IncidentState:
         sufficient = (
             metrics.get("error_rate_percent", 0) >= 10
             and any(isinstance(line, str) and "payment_endpoint" in line.lower() for line in logs)
-            and any(isinstance(item, dict) and item.get("version") == "v2.4.1" for item in deployments)
+            and any(
+                isinstance(item, dict) and item.get("version") == "v2.4.1" for item in deployments
+            )
             and "faulty-deploy.md" in sources
         )
         action = "rollback_deployment"
@@ -175,7 +175,12 @@ def build_graph(
             }
         except _TRANSIENT_ERRORS as exc:
             duration_ms = round((perf_counter() - retrieval_started) * 1000, 3)
-            log_event(logger, "retrieval_failed", category="retrieval_unavailable", duration_ms=duration_ms)
+            log_event(
+                logger,
+                "retrieval_failed",
+                category="retrieval_unavailable",
+                duration_ms=duration_ms,
+            )
             return {
                 "status": "running",
                 "transitions": transitions,
@@ -187,7 +192,9 @@ def build_graph(
             }
         except Exception:
             duration_ms = round((perf_counter() - retrieval_started) * 1000, 3)
-            log_event(logger, "retrieval_failed", category="retrieval_failure", duration_ms=duration_ms)
+            log_event(
+                logger, "retrieval_failed", category="retrieval_failure", duration_ms=duration_ms
+            )
             return {
                 "status": "running",
                 "transitions": transitions,

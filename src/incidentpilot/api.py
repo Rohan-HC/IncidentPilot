@@ -1,15 +1,15 @@
-from pathlib import Path
 import logging
 import os
 import re
+from pathlib import Path
 from time import perf_counter
 from typing import Annotated, Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from fastapi.responses import JSONResponse
 import httpx
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from incidentpilot.agent import investigate
@@ -42,7 +42,9 @@ def create_app(
 ) -> FastAPI:
     configure_logging()
     app = FastAPI(title="IncidentPilot", description="Synthetic incident response only")
-    db_path = Path(database_path or os.environ.get("INCIDENTPILOT_DB_PATH", "data/incidentpilot.db"))
+    db_path = Path(
+        database_path or os.environ.get("INCIDENTPILOT_DB_PATH", "data/incidentpilot.db")
+    )
     store = ApprovalStore(db_path)
     auth = AuthService(auth_config if auth_config is not None else AuthConfig.from_env())
     bearer = HTTPBearer(auto_error=False)
@@ -179,9 +181,12 @@ def create_app(
         except KeyError:
             raise HTTPException(status_code=404, detail="Incident not found") from None
         from langgraph.checkpoint.sqlite import SqliteSaver
+
         from incidentpilot.workflow import build_graph
 
-        if idempotency_key is not None and (not idempotency_key.strip() or len(idempotency_key) > 128):
+        if idempotency_key is not None and (
+            not idempotency_key.strip() or len(idempotency_key) > 128
+        ):
             raise HTTPException(status_code=400, detail="Invalid idempotency key")
         run_id = (
             str(uuid5(NAMESPACE_URL, f"incidentpilot:{incident_id}:{idempotency_key}"))
@@ -189,31 +194,37 @@ def create_app(
             else str(uuid4())
         )
         try:
-            with bind_context(investigation_id=run_id):
-                with SqliteSaver.from_conn_string(str(db_path)) as saver:
-                    graph = build_graph(model, saver, runbook_index)
-                    config = {"configurable": {"thread_id": run_id}}
-                    checkpoint = graph.get_state(config)
-                    if checkpoint.values and checkpoint.values.get("status") in {
-                        "completed", "insufficient_evidence", "blocked", "failed"
-                    }:
-                        state = checkpoint.values
-                    else:
-                        state = graph.invoke(
-                            {
-                                "incident_id": incident_id,
-                                "status": "pending",
-                                "retry_count": 0,
-                                "transitions": [],
-                            },
-                            config,
-                        )
+            with (
+                bind_context(investigation_id=run_id),
+                SqliteSaver.from_conn_string(str(db_path)) as saver,
+            ):
+                graph = build_graph(model, saver, runbook_index)
+                config = {"configurable": {"thread_id": run_id}}
+                checkpoint = graph.get_state(config)
+                if checkpoint.values and checkpoint.values.get("status") in {
+                    "completed",
+                    "insufficient_evidence",
+                    "blocked",
+                    "failed",
+                }:
+                    state = checkpoint.values
+                else:
+                    state = graph.invoke(
+                        {
+                            "incident_id": incident_id,
+                            "status": "pending",
+                            "retry_count": 0,
+                            "transitions": [],
+                        },
+                        config,
+                    )
         except (ImportError, ConnectionError, OSError, httpx.HTTPError) as exc:
             raise HTTPException(status_code=503, detail=f"Local model unavailable: {exc}") from exc
         action = state["proposed_action"]
         proposal = (
             store.create_proposal(run_id, incident_id, action, state["evidence_status"])
-            if action else None
+            if action
+            else None
         )
         return {"run_id": run_id, **state, "proposal": proposal}
 
@@ -223,6 +234,7 @@ def create_app(
         _: Annotated[UserRecord, Depends(require_roles(Role.VIEWER, Role.OPERATOR, Role.APPROVER))],
     ) -> dict[str, Any]:
         from langgraph.checkpoint.sqlite import SqliteSaver
+
         from incidentpilot.workflow import build_graph
 
         with SqliteSaver.from_conn_string(str(db_path)) as saver:

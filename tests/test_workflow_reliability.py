@@ -2,12 +2,12 @@ import httpx
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
-
-from incidentpilot.api import create_app
-from incidentpilot.workflow import RetryPolicy, build_graph
 from test_agent import ScriptedModel
 from test_runbooks import TinyEncoder
+
+from incidentpilot.api import create_app
 from incidentpilot.runbooks import RunbookIndex
+from incidentpilot.workflow import RetryPolicy, build_graph
 
 
 def runbooks(tmp_path):
@@ -38,10 +38,12 @@ def test_transient_model_failure_recovers_with_bounded_retry(tmp_path):
                 raise response
             return response
 
-    model = RaisingModel([
-        httpx.ConnectError("temporary Ollama outage"),
-        AIMessage(content="No corroborating observations."),
-    ])
+    model = RaisingModel(
+        [
+            httpx.ConnectError("temporary Ollama outage"),
+            AIMessage(content="No corroborating observations."),
+        ]
+    )
 
     state = invoke(tmp_path, model)
 
@@ -107,29 +109,40 @@ def test_completed_checkpoint_restores_validated_terminal_state(tmp_path):
             {"configurable": {"thread_id": "restart-run"}},
         )
     with SqliteSaver.from_conn_string(str(db)) as saver:
-        restored = build_graph(model, saver, runbook_index=runbooks(tmp_path)).get_state(
-            {"configurable": {"thread_id": "restart-run"}}
-        ).values
+        restored = (
+            build_graph(model, saver, runbook_index=runbooks(tmp_path))
+            .get_state({"configurable": {"thread_id": "restart-run"}})
+            .values
+        )
 
     assert first["status"] == "insufficient_evidence"
     assert restored["status"] == "insufficient_evidence"
     assert restored["transitions"][-1] == "running->insufficient_evidence"
 
 
-def test_api_idempotency_key_replays_without_duplicate_proposal(tmp_path, auth_config, auth_headers):
-    model = ScriptedModel([
-        AIMessage(content="", tool_calls=[
-            {"name": "get_metrics", "args": {"incident_id": "db-pool-001"}, "id": "m"},
-            {"name": "get_logs", "args": {"incident_id": "db-pool-001"}, "id": "l"},
-        ]),
-        AIMessage(content="Pool saturation is corroborated."),
-    ])
-    client = TestClient(create_app(
-        model=model,
-        database_path=tmp_path / "state.db",
-        runbook_index=runbooks(tmp_path),
-        auth_config=auth_config,
-    ))
+def test_api_idempotency_key_replays_without_duplicate_proposal(
+    tmp_path, auth_config, auth_headers
+):
+    model = ScriptedModel(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "get_metrics", "args": {"incident_id": "db-pool-001"}, "id": "m"},
+                    {"name": "get_logs", "args": {"incident_id": "db-pool-001"}, "id": "l"},
+                ],
+            ),
+            AIMessage(content="Pool saturation is corroborated."),
+        ]
+    )
+    client = TestClient(
+        create_app(
+            model=model,
+            database_path=tmp_path / "state.db",
+            runbook_index=runbooks(tmp_path),
+            auth_config=auth_config,
+        )
+    )
     headers = {**auth_headers(client), "Idempotency-Key": "db-pool-demo"}
 
     first = client.post("/incidents/db-pool-001/analyze", headers=headers)

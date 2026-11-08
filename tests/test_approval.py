@@ -1,6 +1,7 @@
-import pytest
 import tempfile
 from pathlib import Path
+
+import pytest
 
 from incidentpilot.approval import ApprovalStore
 
@@ -23,13 +24,17 @@ def test_execution_requires_explicit_approval_and_is_idempotent(tmp_path):
     assert first["verified"] is True
     assert first["after"]["pool_limit"] == 120
     assert [event["event"] for event in reopened.audit(proposal["id"])] == [
-        "proposed", "approved", "executed"
+        "proposed",
+        "approved",
+        "executed",
     ]
 
 
 def test_denial_blocks_execution(tmp_path):
     store = ApprovalStore(tmp_path / "incidentpilot.db")
-    proposal = store.create_proposal("run-deploy", "deploy-001", "rollback_deployment", "sufficient")
+    proposal = store.create_proposal(
+        "run-deploy", "deploy-001", "rollback_deployment", "sufficient"
+    )
     store.deny(proposal["id"], actor="operator@example.test")
 
     with pytest.raises(ValueError, match="approved"):
@@ -39,7 +44,9 @@ def test_denial_blocks_execution(tmp_path):
 
 def test_approved_deployment_rollback_verifies_synthetic_error_rate(tmp_path):
     store = ApprovalStore(tmp_path / "incidentpilot.db")
-    proposal = store.create_proposal("run-deploy", "deploy-001", "rollback_deployment", "sufficient")
+    proposal = store.create_proposal(
+        "run-deploy", "deploy-001", "rollback_deployment", "sufficient"
+    )
     store.approve(proposal["id"], actor="operator@example.test")
 
     result = store.execute(proposal["id"], "operator@example.test")
@@ -71,7 +78,9 @@ def test_store_releases_sqlite_connections_on_windows():
     with tempfile.TemporaryDirectory() as directory:
         db = Path(directory) / "incidentpilot.db"
         store = ApprovalStore(db)
-        proposal = store.create_proposal("run-db", "db-pool-001", "increase_pool_limit", "sufficient")
+        proposal = store.create_proposal(
+            "run-db", "db-pool-001", "increase_pool_limit", "sufficient"
+        )
         store.get_proposal(proposal["id"])
         store.audit(proposal["id"])
 

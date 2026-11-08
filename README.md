@@ -1,110 +1,157 @@
 # IncidentPilot
 
-IncidentPilot is a local, **simulated** incident response project. It is being built incrementally as an AI engineering portfolio piece. All metrics, logs, deployments, and remediation in this repo are synthetic. No production incident or operational impact is claimed.
+IncidentPilot is a local, simulated incident-response agent built with FastAPI, LangGraph,
+Ollama, SentenceTransformers, and SQLite. It demonstrates defensive LLM tool calling, deterministic
+evidence gates, checkpointed workflow recovery, authenticated human approval, idempotent
+simulated remediation, structured observability, and reproducible agent evaluation.
 
-## What it demonstrates
+All incidents, telemetry, deployments, actions, and verification outcomes are synthetic.
+IncidentPilot has no production infrastructure integrations or remediation credentials.
 
-- Three deterministic incident fixtures: database pool exhaustion, faulty deployment, and insufficient evidence.
-- FastAPI endpoints to list, inspect, investigate, analyze, approve, deny, execute, and audit an incident.
-- Qwen3 4B Instruct through ChatOllama can request four named read-only tools. Python validates the request, executes a local tool, and returns the observation to the model. The model does not have direct access to arbitrary Python functions.
-- `search_runbooks` embeds local Markdown runbooks with sentence-transformers `all-MiniLM-L6-v2`, indexes them in persistent ChromaDB, and returns source IDs, text, and distances.
-- LangGraph runs retrieve, observe, and assess steps with SQLite checkpoints. A deterministic evidence gate requires a relevant runbook and corroborating telemetry before proposing an action; model prose cannot authorize one.
-- SQLite persists proposals, explicit approval or denial, idempotent simulated execution, verification results, and audit events.
-
-## Why the boundary matters
-
-Tool calling means the LLM emits a structured request such as `get_metrics({"incident_id": "db-pool-001"})`. The application owns execution and decides whether that request is allowed. Here the dispatcher exposes only synthetic read-only observations and prevents a model from switching incident IDs mid-investigation. RAG retrieves candidate runbook passages; it does not prove a diagnosis. The separate policy path handles proposed corrective actions and explicit approval.
+## Architecture
 
 ```text
-FastAPI -> LangGraph retrieve -> observe -> ChatOllama/Qwen3 <-> read-only dispatcher
-                                      |                 synthetic data / Chroma
-                                      v
-                       deterministic evidence assessment
-                                      v
-                      SQLite proposal -> explicit approval
-                                      v
-                    simulated action -> verification + audit
+FastAPI + JWT roles
+        |
+        v
+LangGraph: retrieve -> investigate -> deterministic evidence assessment
+        |                    |
+        |                    +-> Ollama/Qwen3 <-> allowlisted read-only tools
+        |                                         (synthetic fixtures only)
+        +-> SQLite vector runbooks
+        +-> SQLite checkpoints
+        v
+SQLite proposal -> authenticated approval/denial -> simulated execution -> audit
 ```
 
-## Run locally
+The model may select four read-only tools: `get_metrics`, `get_logs`,
+`get_recent_deployments`, and `search_runbooks`. Server code validates every tool name,
+call ID, argument schema, incident ID, size, round count, and call count. Model prose and
+retrieved text cannot authorize an action; only deterministic evidence rules can create an
+allowlisted proposal.
 
-Use Python 3.12 for the reproducible path. Python 3.14 passed locally but some dependencies emitted deprecation warnings. Install Ollama and pull `qwen3:4b-instruct`. The plain `qwen3:4b` tag points to a thinking variant that produced a truncated answer without tool calls in our local check.
+## Local setup
+
+Python 3.12 is the supported development and CI version.
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -e '.[dev,rag,graph]'
 ollama pull qwen3:4b-instruct
-.\.venv\Scripts\python -m uvicorn incidentpilot.api:app --reload
 ```
 
-Open `http://127.0.0.1:8000/docs` for the API. The first RAG call downloads the free MiniLM model; later calls use the local cache. Docker users can run `docker compose up --build` with Ollama on the host.
-
-### Guided demo
+Create a signing secret and Argon2 password hashes interactively. These commands print
+configuration values but never write plaintext passwords:
 
 ```powershell
-$incidents = Invoke-RestMethod http://127.0.0.1:8000/incidents
-$analysis = Invoke-RestMethod -Method Post http://127.0.0.1:8000/incidents/db-pool-001/analyze
-$analysis | ConvertTo-Json -Depth 8
-
-# Before approval, this returns HTTP 409.
-Invoke-RestMethod -Method Post "http://127.0.0.1:8000/proposals/$($analysis.proposal.id)/execute"
-
-Invoke-RestMethod -Method Post "http://127.0.0.1:8000/proposals/$($analysis.proposal.id)/approve" -ContentType application/json -Body '{"actor":"demo-operator"}'
-Invoke-RestMethod -Method Post "http://127.0.0.1:8000/proposals/$($analysis.proposal.id)/execute"
-Invoke-RestMethod "http://127.0.0.1:8000/proposals/$($analysis.proposal.id)/audit"
-Invoke-RestMethod "http://127.0.0.1:8000/runs/$($analysis.run_id)"
-
-# No corroborating evidence means no proposal.
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/incidents/unknown-001/analyze
+.\.venv\Scripts\incidentpilot generate-secret
+.\.venv\Scripts\incidentpilot create-user local-viewer --role viewer
+.\.venv\Scripts\incidentpilot create-user local-operator --role operator
+.\.venv\Scripts\incidentpilot create-user local-approver --role approver
 ```
 
-`POST /incidents/{id}/investigate` exposes the direct model/tool loop. `POST /proposals/{id}/deny` records a denial instead of approval. `GET /proposals/{id}` returns the durable state.
+Set `INCIDENTPILOT_AUTH_SECRET` to the generated secret. Merge the generated user records
+into one JSON object and set it as `INCIDENTPILOT_USERS_JSON`. Do not commit populated
+values. `.env.example` lists all supported settings.
 
-Run tests with `.\.venv\Scripts\python -m pytest -q`. Tests use controlled model responses and a tiny deterministic embedding model, so CI needs no Ollama or model download. They cover tool dispatch, Chroma persistence, LangGraph checkpoints, insufficient evidence, approval, denial, idempotency, and the API flow.
+```powershell
+$env:INCIDENTPILOT_AUTH_SECRET = '<generated-secret>'
+$env:INCIDENTPILOT_USERS_JSON = '{"local-operator":{"password_hash":"<argon2-hash>","role":"operator"}}'
+.\.venv\Scripts\python -m uvicorn incidentpilot.api:app --host 127.0.0.1 --port 8000
+```
 
-On 31 October 2026, a live `qwen3:4b-instruct` investigation of `db-pool-001` requested `get_metrics`, `get_logs`, and `get_recent_deployments` and received their synthetic results. The full live API path reached a pending proposal, explicit approval, and verified simulated execution. A later RAG-plus-Qwen3 smoke test retrieved `db-pool.md` and produced a proposal only after the evidence gate saw that source. `pip check` found no broken requirements.
+Open `http://127.0.0.1:8000/docs`. Readiness intentionally returns HTTP 503 until valid
+authentication configuration and SQLite storage are available; liveness remains independent.
 
-## GitHub Actions CI and container delivery
+## Authenticated workflow
 
-[![CI and Container Delivery](https://github.com/Rohan-HC/IncidentPilot/actions/workflows/tests.yml/badge.svg)](https://github.com/Rohan-HC/IncidentPilot/actions/workflows/tests.yml)
+Obtain a short-lived bearer token from `POST /auth/token` with JSON credentials. Roles are:
 
-The [CI workflow](.github/workflows/tests.yml) runs on pull requests and pushes to `main`, and can be started manually from the Actions tab.
+- `viewer`: read runs, proposals, audits, and local operational counters.
+- `operator`: investigate, analyze, and execute an approved simulated action.
+- `approver`: approve or deny a pending proposal.
 
-1. **Python tests:** Install Python 3.12 with project extras and execute pytest. Scripted model responses and deterministic embeddings mean **no Ollama, API key, or model download is required**.
-2. **Container verification:** After pytest passes, build the CPU-only Docker image and run a health-check smoke test against `GET /health`.
-3. **Image publishing:** Only a successful **push to `main`** uploads the verified image to GitHub Container Registry (GHCR). Pull requests build/test but never publish.
+The complete flow is:
 
-Published tags:
-- `ghcr.io/rohan-hc/incidentpilot:latest`
-- `ghcr.io/rohan-hc/incidentpilot:sha-<first-seven-commit-characters>`
+1. `POST /incidents/{incident_id}/analyze` with an operator token and optional
+   `Idempotency-Key` header.
+2. Review the returned evidence, terminal status, and pending proposal.
+3. `POST /proposals/{proposal_id}/approve` with an approver token.
+4. `POST /proposals/{proposal_id}/execute` with an operator token.
+5. Inspect `GET /proposals/{proposal_id}/audit` and `GET /runs/{run_id}`.
 
-The workflow uses GitHub's built-in `GITHUB_TOKEN` with scoped `packages: write` permission; no personal token or paid CI service is needed. Newly created GHCR packages are **private by default**. To allow public pulls, go to your GitHub profile's Packages, select `incidentpilot`, open **Package settings**, and change its visibility to **Public**.
+Denial, insufficient evidence, blocked investigations, direct execution, conflicting decisions,
+and non-allowlisted actions cannot execute. Repeated execution returns the persisted result and
+does not create a second simulated action.
 
-To run a published image on a machine with local Ollama and `qwen3:4b-instruct` installed:
+## Evaluation
+
+`evals/datasets/v1.json` is a versioned synthetic scorer-validation dataset covering correct
+investigations, partial and contradictory evidence, retrieval problems, tool-protocol failures,
+cross-incident attempts, prompt injection, unauthorized operations, duplicate calls, model
+failure, and incorrect recommendations.
+
+```powershell
+.\.venv\Scripts\python -m incidentpilot.evaluation `
+  --mode synthetic_fixture `
+  --dataset evals/datasets/v1.json `
+  --output evals/results/local-fixture.json
+```
+
+Fixture scores validate metric calculations; they are not model reliability measurements.
+Optional live local inference uses only the three synthetic incident scenarios:
+
+```powershell
+.\.venv\Scripts\python -m incidentpilot.evaluation `
+  --mode live_local `
+  --model qwen3:4b-instruct `
+  --output evals/results/local-live.json
+```
+
+Generated evaluation outputs are ignored by Git.
+
+## Verification
+
+```powershell
+.\.venv\Scripts\python -m pytest -q
+.\.venv\Scripts\python -m ruff check .
+.\.venv\Scripts\python -m ruff format --check .
+.\.venv\Scripts\python -m pip check
+.\.venv\Scripts\python -m pip_audit
+docker build -t incidentpilot:local .
+```
+
+Tests use scripted model responses and deterministic embeddings; CI does not need Ollama or a
+paid API. GitHub Actions runs formatting, static analysis, dependency checks, tests, a Docker
+build, and a liveness smoke test. Images publish to GHCR only after a successful push to `main`.
+
+Docker Compose binds the API to `127.0.0.1:8000`, requires authentication variables, and stores
+SQLite and local model data in a named volume:
 
 ```bash
-docker pull ghcr.io/rohan-hc/incidentpilot:latest
-docker run --rm --name incidentpilot -p 8000:8000 \
-  --add-host=host.docker.internal:host-gateway \
-  -e OLLAMA_HOST=http://host.docker.internal:11434 \
-  -e INCIDENTPILOT_DB_PATH=/app/data/incidentpilot.db \
-  -e INCIDENTPILOT_CHROMA_PATH=/app/data/chroma \
-  -e HF_HOME=/app/data/huggingface \
-  -v incidentpilot-data:/app/data \
-  ghcr.io/rohan-hc/incidentpilot:latest
+docker compose up --build
 ```
 
-The health endpoint can respond without Ollama; **analysis and remediation proposals require a running Ollama model**. Publishing an image is continuous delivery, **not** a public hosted production deployment. This app is intentionally a single-user simulated local system with no authentication; do not expose it publicly.
+## Operational endpoints
 
-## Limitations and honest portfolio wording
+- `GET /health/live`: process liveness; no dependency checks.
+- `GET /health/ready`: SQLite and authentication readiness.
+- `GET /ops/metrics`: authenticated local counters.
+- Every response includes `X-Correlation-ID`; callers may supply a safe ID in the request.
+- JSON logs include correlation/investigation IDs, durations, transitions, and safe failure
+  categories. Credentials, tokens, prompts, and runbook text are excluded.
 
-- The LLM can make unsupported inferences. In one live run it asserted high request volume without a request-volume metric. The deterministic gate limits action proposals; the prose still needs human review.
-- Qwen3 sometimes emits a malformed tool call. The graph records this as a durable `blocked` run with no proposal; retry the analysis after checking Ollama.
-- This is a single-user local demo. The `actor` field is self-declared, not authenticated. SQLite audit rows are durable but not tamper-evident. Do not expose the API to untrusted users.
-- Remediation and verification are fixed simulation outcomes. No database pool, deployment, or live service changes.
-- The rules and runbooks cover three examples, not a general incident response policy. The Chroma relevance threshold is a demo heuristic, not a calibrated retrieval evaluation.
-- Docker Compose was verified locally: the image built successfully, the API returned 200 from `/health`, all three incidents were listed, and the container reached host Ollama. A complete database-pool analysis also produced a pending proposal; pre-approval execution returned 409, approval and simulated execution succeeded, verification was true, repeated execution was idempotent, and audit events persisted. The original GitHub-hosted Python CI run passed on 1 November 2026; the expanded Docker build, smoke test, and GHCR publish jobs must be validated separately.
+## Security and reliability limits
 
-Suitable résumé language: **“Built a local simulated incident-response agent with Ollama tool calling, Chroma runbook retrieval, LangGraph/SQLite state, and approval-gated, idempotent simulated remediation.”**
-
-The [design](docs/superpowers/specs/2026-10-31-incidentpilot-design.md) and [implementation plan](docs/superpowers/plans/2026-10-31-incidentpilot.md) record the decisions and verification work.
+- Local HMAC JWTs are suitable for this single-service demonstration, not centralized identity,
+  revocation, or enterprise tenancy.
+- SQLite transactions serialize approval, denial, and execution; this is not a distributed lock.
+- Audit records are append-only through the API but are not cryptographically tamper-evident
+  against a host administrator.
+- Agent timeouts stop waiting for a model call; Python cannot forcibly terminate an already
+  running provider thread.
+- Vector relevance thresholds and deterministic evidence rules cover the included synthetic
+  scenarios only.
+- Live Ollama outputs vary by model/runtime version and hardware. Only explicitly recorded live
+  evaluation output should be described as live-model behavior.
+- Do not expose this demonstration publicly or connect its simulated actions to real systems.

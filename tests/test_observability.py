@@ -5,16 +5,16 @@ import logging
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
+from test_agent import ScriptedModel
+from test_runbooks import TinyEncoder
 
 from incidentpilot.agent import investigate
 from incidentpilot.api import create_app
 from incidentpilot.auth import Role
 from incidentpilot.observability import JsonFormatter, bind_context, log_event
+from incidentpilot.runbooks import RunbookIndex
 from incidentpilot.simulator import get_incident
 from incidentpilot.workflow import build_graph
-from test_agent import ScriptedModel
-from test_runbooks import TinyEncoder
-from incidentpilot.runbooks import RunbookIndex
 
 
 def runbooks(tmp_path):
@@ -58,7 +58,9 @@ def test_json_formatter_includes_trace_context_without_secret_content():
 
 def test_liveness_is_independent_and_readiness_checks_auth_and_sqlite(auth_config, tmp_path):
     unconfigured = TestClient(create_app(database_path=tmp_path / "missing-auth.db"))
-    configured = TestClient(create_app(database_path=tmp_path / "ready.db", auth_config=auth_config))
+    configured = TestClient(
+        create_app(database_path=tmp_path / "ready.db", auth_config=auth_config)
+    )
 
     assert unconfigured.get("/health/live").status_code == 200
     assert unconfigured.get("/health/ready").status_code == 503
@@ -68,12 +70,17 @@ def test_liveness_is_independent_and_readiness_checks_auth_and_sqlite(auth_confi
 
 
 def test_model_tool_and_retrieval_durations_are_recorded(tmp_path):
-    model = ScriptedModel([
-        AIMessage(content="", tool_calls=[{
-            "name": "get_metrics", "args": {"incident_id": "db-pool-001"}, "id": "m"
-        }]),
-        AIMessage(content="Metrics collected."),
-    ])
+    model = ScriptedModel(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "get_metrics", "args": {"incident_id": "db-pool-001"}, "id": "m"}
+                ],
+            ),
+            AIMessage(content="Metrics collected."),
+        ]
+    )
     direct = investigate(get_incident("db-pool-001"), model)
 
     assert direct.model_duration_ms >= 0
@@ -90,19 +97,26 @@ def test_model_tool_and_retrieval_durations_are_recorded(tmp_path):
 
 
 def test_workflow_and_approval_events_are_logged(caplog, auth_config, auth_headers, tmp_path):
-    model = ScriptedModel([
-        AIMessage(content="", tool_calls=[
-            {"name": "get_metrics", "args": {"incident_id": "db-pool-001"}, "id": "m"},
-            {"name": "get_logs", "args": {"incident_id": "db-pool-001"}, "id": "l"},
-        ]),
-        AIMessage(content="Pool is saturated."),
-    ])
-    client = TestClient(create_app(
-        model=model,
-        database_path=tmp_path / "state.db",
-        runbook_index=runbooks(tmp_path),
-        auth_config=auth_config,
-    ))
+    model = ScriptedModel(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "get_metrics", "args": {"incident_id": "db-pool-001"}, "id": "m"},
+                    {"name": "get_logs", "args": {"incident_id": "db-pool-001"}, "id": "l"},
+                ],
+            ),
+            AIMessage(content="Pool is saturated."),
+        ]
+    )
+    client = TestClient(
+        create_app(
+            model=model,
+            database_path=tmp_path / "state.db",
+            runbook_index=runbooks(tmp_path),
+            auth_config=auth_config,
+        )
+    )
     operator = auth_headers(client, Role.OPERATOR)
     approver = auth_headers(client, Role.APPROVER)
 

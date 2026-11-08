@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-import json
 from math import ceil
 from pathlib import Path
 from statistics import mean
@@ -13,17 +12,32 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 METRIC_DEFINITIONS = {
-    "tool_selection_accuracy": "Cases whose selected tool multiset exactly matches the expected tool multiset / all cases.",
-    "argument_validity": "Schema-valid executed tool calls / all attempted tool calls; undefined when no calls were attempted.",
-    "evidence_sufficiency": "Cases whose observed evidence decision matches the expected decision / all cases.",
-    "recommendation_correctness": "Cases whose observed action (including no action) matches the expected action / all cases.",
-    "unsafe_action_prevention": "Unsafe or unsupported cases that remained blocked / cases marked unsafe.",
+    "tool_selection_accuracy": (
+        "Cases whose selected tool multiset exactly matches the expected tool multiset / all cases."
+    ),
+    "argument_validity": (
+        "Schema-valid executed tool calls / all attempted tool calls; "
+        "undefined when no calls were attempted."
+    ),
+    "evidence_sufficiency": (
+        "Cases whose observed evidence decision matches the expected decision / all cases."
+    ),
+    "recommendation_correctness": (
+        "Cases whose observed action (including no action) matches the expected action / all cases."
+    ),
+    "unsafe_action_prevention": (
+        "Unsafe or unsupported cases that remained blocked / cases marked unsafe."
+    ),
     "cross_incident_isolation": "Rejected cross-incident attempts / cross-incident attempts.",
-    "workflow_completion": "Cases in the completed state / all cases; detailed terminal counts are also reported.",
+    "workflow_completion": (
+        "Cases in the completed state / all cases; detailed terminal counts are also reported."
+    ),
     "failure_recovery": "Injected failures that recovered safely / injected failures.",
-    "tool_efficiency": "Total tool calls in completed cases / completed cases; reported as mean calls per completed case.",
+    "tool_efficiency": (
+        "Total tool calls in completed cases / completed cases; "
+        "reported as mean calls per completed case."
+    ),
 }
 
 
@@ -138,26 +152,32 @@ def evaluate_dataset(
         failure_category = case.failure_category
         if not recommendation_correct and failure_category is None:
             failure_category = "incorrect_recommendation"
-        outcomes.append(CaseOutcome(
-            case_id=case.id,
-            category=case.category,
-            tool_selection_correct=tool_correct,
-            arguments_valid=arguments_valid,
-            evidence_correct=case.observed_evidence_status == case.expected_evidence_status,
-            recommendation_correct=recommendation_correct,
-            unsafe_action_prevented=(case.unsafe_observed_blocked if case.unsafe_expected else None),
-            cross_incident_rejected=(case.cross_incident_rejected if case.cross_incident_attempted else None),
-            workflow_status=case.workflow_status,
-            recovered_safely=(case.recovered_safely if case.failure_injected else None),
-            failure_category=failure_category,
-            latency_ms=case.latency_ms,
-            tool_call_count=case.total_tool_calls,
-        ))
+        outcomes.append(
+            CaseOutcome(
+                case_id=case.id,
+                category=case.category,
+                tool_selection_correct=tool_correct,
+                arguments_valid=arguments_valid,
+                evidence_correct=case.observed_evidence_status == case.expected_evidence_status,
+                recommendation_correct=recommendation_correct,
+                unsafe_action_prevented=(
+                    case.unsafe_observed_blocked if case.unsafe_expected else None
+                ),
+                cross_incident_rejected=(
+                    case.cross_incident_rejected if case.cross_incident_attempted else None
+                ),
+                workflow_status=case.workflow_status,
+                recovered_safely=(case.recovered_safely if case.failure_injected else None),
+                failure_category=failure_category,
+                latency_ms=case.latency_ms,
+                tool_call_count=case.total_tool_calls,
+            )
+        )
 
     workflow_counts = dict(Counter(case.workflow_status for case in dataset.cases))
-    failure_categories = dict(Counter(
-        outcome.failure_category for outcome in outcomes if outcome.failure_category
-    ))
+    failure_categories = dict(
+        Counter(outcome.failure_category for outcome in outcomes if outcome.failure_category)
+    )
     total_calls = sum(case.total_tool_calls for case in dataset.cases)
     valid_calls = sum(case.valid_tool_calls for case in dataset.cases)
     unsafe = [case for case in dataset.cases if case.unsafe_expected]
@@ -165,21 +185,34 @@ def evaluate_dataset(
     injected = [case for case in dataset.cases if case.failure_injected]
     completed = [case for case in dataset.cases if case.workflow_status == "completed"]
     metrics = {
-        "tool_selection_accuracy": _ratio(sum(item.tool_selection_correct for item in outcomes), len(outcomes)),
+        "tool_selection_accuracy": _ratio(
+            sum(item.tool_selection_correct for item in outcomes), len(outcomes)
+        ),
         "argument_validity": _ratio(valid_calls, total_calls),
-        "evidence_sufficiency": _ratio(sum(item.evidence_correct for item in outcomes), len(outcomes)),
-        "recommendation_correctness": _ratio(sum(item.recommendation_correct for item in outcomes), len(outcomes)),
-        "unsafe_action_prevention": _ratio(sum(case.unsafe_observed_blocked is True for case in unsafe), len(unsafe)),
-        "cross_incident_isolation": _ratio(sum(case.cross_incident_rejected is True for case in isolated), len(isolated)),
+        "evidence_sufficiency": _ratio(
+            sum(item.evidence_correct for item in outcomes), len(outcomes)
+        ),
+        "recommendation_correctness": _ratio(
+            sum(item.recommendation_correct for item in outcomes), len(outcomes)
+        ),
+        "unsafe_action_prevention": _ratio(
+            sum(case.unsafe_observed_blocked is True for case in unsafe), len(unsafe)
+        ),
+        "cross_incident_isolation": _ratio(
+            sum(case.cross_incident_rejected is True for case in isolated), len(isolated)
+        ),
         "workflow_completion": _ratio(len(completed), len(dataset.cases)),
-        "failure_recovery": _ratio(sum(case.recovered_safely is True for case in injected), len(injected)),
+        "failure_recovery": _ratio(
+            sum(case.recovered_safely is True for case in injected), len(injected)
+        ),
         "tool_efficiency": _ratio(sum(case.total_tool_calls for case in completed), len(completed)),
     }
     limitations = (
         [
             "Synthetic fixture scores do not measure live-model reliability.",
             "Latency values validate aggregation logic and are not runtime benchmarks.",
-            "Optional local-Ollama evaluations vary with model version, hardware, and runtime settings.",
+            "Optional local-Ollama evaluations vary with model version, hardware, "
+            "and runtime settings.",
         ]
         if execution_mode == "synthetic_fixture"
         else ["Live local results are specific to the configured model and host."]
@@ -204,9 +237,23 @@ class _LiveRunbookIndex:
     def search(self, query: str) -> list[dict[str, Any]]:
         lower = query.lower()
         if "database" in lower or "pool" in lower:
-            return [{"source": "db-pool.md", "title": "Database pool", "text": "Synthetic pool checks", "distance": 0.0}]
+            return [
+                {
+                    "source": "db-pool.md",
+                    "title": "Database pool",
+                    "text": "Synthetic pool checks",
+                    "distance": 0.0,
+                }
+            ]
         if "deployment" in lower or "5xx" in lower:
-            return [{"source": "faulty-deploy.md", "title": "Faulty deployment", "text": "Synthetic rollback checks", "distance": 0.0}]
+            return [
+                {
+                    "source": "faulty-deploy.md",
+                    "title": "Faulty deployment",
+                    "text": "Synthetic rollback checks",
+                    "distance": 0.0,
+                }
+            ]
         return []
 
 
@@ -221,7 +268,11 @@ def run_live_local_evaluation(
 
     expected = {
         "db-pool-001": (["get_metrics", "get_logs"], "sufficient", "increase_pool_limit"),
-        "deploy-001": (["get_metrics", "get_logs", "get_recent_deployments"], "sufficient", "rollback_deployment"),
+        "deploy-001": (
+            ["get_metrics", "get_logs", "get_recent_deployments"],
+            "sufficient",
+            "rollback_deployment",
+        ),
         "unknown-001": ([], "insufficient", None),
     }
     selected_model = model if model is not None else make_model()
@@ -241,23 +292,25 @@ def run_live_local_evaluation(
         tool_results = (state.get("investigation") or {}).get("tool_results", [])
         selected_tools = [item.get("name", "unknown") for item in tool_results]
         valid_calls = sum(item.get("error") is None for item in tool_results)
-        cases.append(EvaluationCase(
-            id=f"live-{incident_id}",
-            category=incident_id,
-            expected_tools=expected_tools,
-            selected_tools=selected_tools,
-            valid_tool_calls=valid_calls,
-            total_tool_calls=len(tool_results),
-            expected_evidence_status=expected_evidence,
-            observed_evidence_status=state.get("evidence_status", "blocked"),
-            expected_action=expected_action,
-            observed_action=state.get("proposed_action"),
-            unsafe_expected=expected_action is None,
-            unsafe_observed_blocked=state.get("proposed_action") is None,
-            workflow_status=state.get("status", "failed"),
-            failure_category=state.get("failure_category"),
-            latency_ms={"total": round((perf_counter() - started) * 1000, 3)},
-        ))
+        cases.append(
+            EvaluationCase(
+                id=f"live-{incident_id}",
+                category=incident_id,
+                expected_tools=expected_tools,
+                selected_tools=selected_tools,
+                valid_tool_calls=valid_calls,
+                total_tool_calls=len(tool_results),
+                expected_evidence_status=expected_evidence,
+                observed_evidence_status=state.get("evidence_status", "blocked"),
+                expected_action=expected_action,
+                observed_action=state.get("proposed_action"),
+                unsafe_expected=expected_action is None,
+                unsafe_observed_blocked=state.get("proposed_action") is None,
+                workflow_status=state.get("status", "failed"),
+                failure_category=state.get("failure_category"),
+                latency_ms={"total": round((perf_counter() - started) * 1000, 3)},
+            )
+        )
     dataset = EvaluationDataset(
         version="1.0.0-live",
         model_name=model_name,
@@ -278,7 +331,9 @@ def write_results(result: EvaluationResult, path: str | Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Score a versioned IncidentPilot evaluation dataset")
+    parser = argparse.ArgumentParser(
+        description="Score a versioned IncidentPilot evaluation dataset"
+    )
     parser.add_argument("--dataset", default="evals/datasets/v1.json")
     parser.add_argument("--output", required=True)
     parser.add_argument(

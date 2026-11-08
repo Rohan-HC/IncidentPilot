@@ -2,16 +2,19 @@ services:
   api:
     build: .
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       OLLAMA_HOST: http://host.docker.internal:11434
       INCIDENTPILOT_DB_PATH: /app/data/incidentpilot.db
-      INCIDENTPILOT_CHROMA_PATH: /app/data/chroma
+      INCIDENTPILOT_RUNBOOK_PATH: /app/data/runbooks.db
+      INCIDENTPILOT_AUTH_SECRET: ${INCIDENTPILOT_AUTH_SECRET:?set INCIDENTPILOT_AUTH_SECRET}
+      INCIDENTPILOT_USERS_JSON: ${INCIDENTPILOT_USERS_JSON:?set INCIDENTPILOT_USERS_JSON}
       HF_HOME: /app/data/huggingface
     volumes:
       - incidentpilot-data:/app/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    restart: unless-stopped
 
 volumes:
   incidentpilot-data:

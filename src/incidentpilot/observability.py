@@ -2,21 +2,27 @@
 
 from __future__ import annotations
 
-from collections import Counter
-from contextlib import contextmanager
-from contextvars import ContextVar
-from datetime import datetime, timezone
 import json
 import logging
+from collections import Counter
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from datetime import UTC, datetime
 from threading import Lock
-from typing import Any, Iterator
-
+from typing import Any
 
 correlation_id_var: ContextVar[str | None] = ContextVar("correlation_id", default=None)
 investigation_id_var: ContextVar[str | None] = ContextVar("investigation_id", default=None)
 
 _SENSITIVE_FIELDS = {
-    "authorization", "password", "token", "access_token", "secret", "prompt", "runbook_text"
+    "authorization",
+    "password",
+    "token",
+    "access_token",
+    "secret",
+    "prompt",
+    "runbook_text",
 }
 
 
@@ -39,7 +45,7 @@ def bind_context(
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname.lower(),
             "logger": record.name,
             "event": getattr(record, "event", record.getMessage()),
