@@ -1,9 +1,9 @@
 from pathlib import Path
 import os
-from typing import Any
-from uuid import uuid4
+from typing import Annotated, Any
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 import httpx
 from pydantic import BaseModel, Field
 
@@ -55,7 +55,10 @@ def create_app(model: Any | None = None, database_path: str | Path | None = None
             raise HTTPException(status_code=503, detail=f"Local model unavailable: {exc}") from exc
 
     @app.post("/incidents/{incident_id}/analyze")
-    def analyze(incident_id: str) -> dict[str, Any]:
+    def analyze(
+        incident_id: str,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> dict[str, Any]:
         try:
             get_incident(incident_id)
         except KeyError:
@@ -63,12 +66,32 @@ def create_app(model: Any | None = None, database_path: str | Path | None = None
         from langgraph.checkpoint.sqlite import SqliteSaver
         from incidentpilot.workflow import build_graph
 
-        run_id = str(uuid4())
+        if idempotency_key is not None and (not idempotency_key.strip() or len(idempotency_key) > 128):
+            raise HTTPException(status_code=400, detail="Invalid idempotency key")
+        run_id = (
+            str(uuid5(NAMESPACE_URL, f"incidentpilot:{incident_id}:{idempotency_key}"))
+            if idempotency_key is not None
+            else str(uuid4())
+        )
         try:
             with SqliteSaver.from_conn_string(str(db_path)) as saver:
-                state = build_graph(model, saver, runbook_index).invoke(
-                    {"incident_id": incident_id}, {"configurable": {"thread_id": run_id}}
-                )
+                graph = build_graph(model, saver, runbook_index)
+                config = {"configurable": {"thread_id": run_id}}
+                checkpoint = graph.get_state(config)
+                if checkpoint.values and checkpoint.values.get("status") in {
+                    "completed", "insufficient_evidence", "blocked", "failed"
+                }:
+                    state = checkpoint.values
+                else:
+                    state = graph.invoke(
+                        {
+                            "incident_id": incident_id,
+                            "status": "pending",
+                            "retry_count": 0,
+                            "transitions": [],
+                        },
+                        config,
+                    )
         except (ImportError, ConnectionError, OSError, httpx.HTTPError) as exc:
             raise HTTPException(status_code=503, detail=f"Local model unavailable: {exc}") from exc
         action = state["proposed_action"]
