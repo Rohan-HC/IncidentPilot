@@ -5,6 +5,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 import json
+import logging
 from time import monotonic
 from typing import Any
 
@@ -12,6 +13,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from pydantic import ValidationError
 
 from incidentpilot.models import Incident, Investigation, ToolResult
+from incidentpilot.observability import COUNTERS, log_event
 from incidentpilot.tools import MODEL_TOOLS, TOOL_SCHEMAS, dispatch_tool
 
 
@@ -25,6 +27,7 @@ _TOOL_NAMES = {
     "get_recent_deployments": "get_recent_deployments",
     "search_runbooks": "search_runbooks",
 }
+logger = logging.getLogger("incidentpilot")
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,49 +158,69 @@ def investigate(
     invocations = 0
     tool_count = 0
     terminate_after_protocol_reply = False
+    model_duration_ms = 0.0
+
+    def blocked(category: str, answer: str, blocked_results: list[ToolResult] | None = None) -> Investigation:
+        result = _blocked(
+            incident.id,
+            category,
+            answer,
+            results if blocked_results is None else blocked_results,
+            invocations,
+            tool_count,
+        )
+        result.model_duration_ms = round(model_duration_ms, 3)
+        COUNTERS.increment("investigations_blocked_total")
+        log_event(logger, "investigation_blocked", category=category)
+        return result
 
     for _ in range(limits.max_rounds):
         remaining = limits.investigation_timeout_seconds - (monotonic() - started)
         if remaining <= 0:
-            return _blocked(incident.id, "investigation_timeout", "Investigation timed out.", results, invocations, tool_count)
+            return blocked("investigation_timeout", "Investigation timed out.")
         invocations += 1
+        invocation_started = monotonic()
         try:
             reply = _invoke_with_timeout(bound, messages, min(limits.model_timeout_seconds, remaining))
         except FutureTimeoutError:
-            return _blocked(incident.id, "model_timeout", "Model invocation timed out.", results, invocations, tool_count)
+            model_duration_ms += (monotonic() - invocation_started) * 1000
+            COUNTERS.increment("model_invocations_total")
+            return blocked("model_timeout", "Model invocation timed out.")
+        except BaseException:
+            model_duration_ms += (monotonic() - invocation_started) * 1000
+            COUNTERS.increment("model_invocations_total")
+            log_event(logger, "model_invocation_failed", duration_ms=round(model_duration_ms, 3))
+            raise
+        model_duration_ms += (monotonic() - invocation_started) * 1000
+        COUNTERS.increment("model_invocations_total")
+        log_event(logger, "model_invocation_completed", duration_ms=round(model_duration_ms, 3))
 
         parts = _response_parts(reply)
         if parts is None:
-            return _blocked(incident.id, "model_response", "Model returned an invalid response shape.", results, invocations, tool_count)
+            return blocked("model_response", "Model returned an invalid response shape.")
         content, calls = parts
         if terminate_after_protocol_reply:
-            return _blocked(
-                incident.id,
-                "tool_protocol",
-                "Investigation terminated after an invalid tool call.",
-                results,
-                invocations,
-                tool_count,
-            )
+            return blocked("tool_protocol", "Investigation terminated after an invalid tool call.")
         if not calls:
             if not content.strip():
-                return _blocked(incident.id, "model_response", "Model returned an incomplete response.", results, invocations, tool_count)
+                return blocked("model_response", "Model returned an incomplete response.")
             messages.append(reply)
             return Investigation(
                 incident_id=incident.id,
                 answer=content,
                 tool_results=results,
                 model_invocations=invocations,
+                model_duration_ms=round(model_duration_ms, 3),
                 tool_call_count=tool_count,
             )
 
         call_ids = [call.get("id") for call in calls]
         if any(not isinstance(call_id, str) or not call_id.strip() for call_id in call_ids):
-            return _blocked(incident.id, "tool_protocol", "Tool protocol is missing a call identifier.", results, invocations, tool_count)
+            return blocked("tool_protocol", "Tool protocol is missing a call identifier.")
         if len(set(call_ids)) != len(call_ids) or any(call_id in seen_call_ids for call_id in call_ids):
-            return _blocked(incident.id, "tool_protocol", "Tool protocol contains a duplicate call identifier.", results, invocations, tool_count)
+            return blocked("tool_protocol", "Tool protocol contains a duplicate call identifier.")
         if tool_count + len(calls) > limits.max_tool_calls:
-            return _blocked(incident.id, "limit_exceeded", "Investigation exceeded the tool-call limit.", results, invocations, tool_count)
+            return blocked("limit_exceeded", "Investigation exceeded the tool-call limit.")
 
         validated_calls: list[tuple[str, str, dict[str, Any]] | ToolResult] = []
         for call in calls:
@@ -207,7 +230,7 @@ def investigate(
         invalid = [item for item in validated_calls if isinstance(item, ToolResult)]
         if invalid:
             if any(item.error_code == "argument_too_large" for item in invalid):
-                return _blocked(incident.id, "limit_exceeded", "Tool arguments exceeded the configured limit.", invalid, invocations, tool_count)
+                return blocked("limit_exceeded", "Tool arguments exceeded the configured limit.", invalid)
             messages.append(reply)
             invalid_by_id = {item.call_id: item for item in invalid}
             for call_id in call_ids:
@@ -246,17 +269,17 @@ def investigate(
                     duration_ms=round((monotonic() - tool_started) * 1000, 3),
                 )
                 results.append(result)
-                return _blocked(incident.id, "tool_execution", "A tool failed safely.", results, invocations, tool_count)
+                COUNTERS.increment("tool_failures_total")
+                log_event(logger, "tool_execution_failed", tool=name, duration_ms=result.duration_ms)
+                return blocked("tool_execution", "A tool failed safely.")
             results.append(result)
             tool_count += 1
+            COUNTERS.increment("tool_calls_total")
+            log_event(logger, "tool_execution_completed", tool=name, duration_ms=result.duration_ms)
             seen_call_ids.add(call_id)
             messages.append(ToolMessage(content=json.dumps(output), tool_call_id=call_id))
 
-    return _blocked(
-        incident.id,
+    return blocked(
         "limit_exceeded",
         "Investigation stopped after the model-round limit; evidence needs human review.",
-        results,
-        invocations,
-        tool_count,
     )

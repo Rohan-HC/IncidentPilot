@@ -30,5 +30,6 @@ class Investigation(BaseModel):
     status: Literal["completed", "blocked"] = "completed"
     error_category: str | None = None
     model_invocations: int = 0
+    model_duration_ms: float = 0
     tool_call_count: int = 0
     simulated: bool = True

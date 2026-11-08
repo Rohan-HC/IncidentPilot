@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from time import sleep
+import logging
+from time import perf_counter, sleep
 from typing import Any, Callable, Literal, TypedDict, TypeVar
 
 import httpx
@@ -11,6 +12,7 @@ from langgraph.graph import END, START, StateGraph
 from ollama import ResponseError
 
 from incidentpilot.agent import investigate
+from incidentpilot.observability import COUNTERS, log_event
 from incidentpilot.simulator import get_incident
 from incidentpilot.tools import get_default_runbook_index
 
@@ -18,6 +20,7 @@ from incidentpilot.tools import get_default_runbook_index
 InvestigationStatus = Literal[
     "pending", "running", "completed", "insufficient_evidence", "blocked", "failed"
 ]
+logger = logging.getLogger("incidentpilot")
 
 
 class IncidentState(TypedDict, total=False):
@@ -32,6 +35,7 @@ class IncidentState(TypedDict, total=False):
     failure_category: str | None
     retry_count: int
     transitions: list[str]
+    retrieval_duration_ms: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +81,8 @@ def _terminal(state: IncidentState, status: InvestigationStatus) -> IncidentStat
     transitions = list(state.get("transitions", []))
     previous = state.get("status", "running")
     transitions.append(f"{previous}->{status}")
+    COUNTERS.increment(f"workflow_status_{status}_total")
+    log_event(logger, "workflow_transition", previous=previous, status=status)
     return {"status": status, "transitions": transitions}
 
 
@@ -147,6 +153,7 @@ def build_graph(
     policy = retry_policy or RetryPolicy()
 
     def retrieve(state: IncidentState) -> IncidentState:
+        retrieval_started = perf_counter()
         incident = get_incident(state["incident_id"])
         transitions = list(state.get("transitions", []))
         transitions.append(f"{state.get('status', 'pending')}->running")
@@ -155,14 +162,20 @@ def build_graph(
             hits, retries = _with_retry(
                 lambda: index.search(f"{incident.title}. {incident.symptom}"), policy
             )
+            duration_ms = round((perf_counter() - retrieval_started) * 1000, 3)
+            COUNTERS.increment("retrievals_total")
+            log_event(logger, "retrieval_completed", duration_ms=duration_ms, hit_count=len(hits))
             return {
                 "status": "running",
                 "transitions": transitions,
                 "runbook_hits": hits,
                 "retrieval_error": None,
                 "retry_count": state.get("retry_count", 0) + retries,
+                "retrieval_duration_ms": duration_ms,
             }
         except _TRANSIENT_ERRORS as exc:
+            duration_ms = round((perf_counter() - retrieval_started) * 1000, 3)
+            log_event(logger, "retrieval_failed", category="retrieval_unavailable", duration_ms=duration_ms)
             return {
                 "status": "running",
                 "transitions": transitions,
@@ -170,8 +183,11 @@ def build_graph(
                 "retrieval_error": str(exc),
                 "failure_category": "retrieval_unavailable",
                 "retry_count": state.get("retry_count", 0) + policy.max_attempts - 1,
+                "retrieval_duration_ms": duration_ms,
             }
         except Exception:
+            duration_ms = round((perf_counter() - retrieval_started) * 1000, 3)
+            log_event(logger, "retrieval_failed", category="retrieval_failure", duration_ms=duration_ms)
             return {
                 "status": "running",
                 "transitions": transitions,
@@ -179,6 +195,7 @@ def build_graph(
                 "retrieval_error": "Runbook retrieval failed",
                 "failure_category": "retrieval_failure",
                 "retry_count": state.get("retry_count", 0),
+                "retrieval_duration_ms": duration_ms,
             }
 
     def observe(state: IncidentState) -> IncidentState:

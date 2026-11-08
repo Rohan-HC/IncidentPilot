@@ -1,10 +1,14 @@
 from pathlib import Path
+import logging
 import os
+import re
+from time import perf_counter
 from typing import Annotated, Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.responses import JSONResponse
 import httpx
 from pydantic import BaseModel, Field
 
@@ -12,6 +16,12 @@ from incidentpilot.agent import investigate
 from incidentpilot.approval import ApprovalStore
 from incidentpilot.auth import AuthConfig, AuthService, Role, UserRecord
 from incidentpilot.models import Incident, Investigation
+from incidentpilot.observability import (
+    COUNTERS,
+    bind_context,
+    configure_logging,
+    log_event,
+)
 from incidentpilot.simulator import get_incident, list_incidents
 
 
@@ -20,17 +30,54 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=1024)
 
 
+logger = logging.getLogger("incidentpilot")
+_CORRELATION_ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
 def create_app(
     model: Any | None = None,
     database_path: str | Path | None = None,
     runbook_index: Any | None = None,
     auth_config: AuthConfig | None = None,
 ) -> FastAPI:
+    configure_logging()
     app = FastAPI(title="IncidentPilot", description="Synthetic incident response only")
     db_path = Path(database_path or os.environ.get("INCIDENTPILOT_DB_PATH", "data/incidentpilot.db"))
     store = ApprovalStore(db_path)
     auth = AuthService(auth_config if auth_config is not None else AuthConfig.from_env())
     bearer = HTTPBearer(auto_error=False)
+
+    @app.middleware("http")
+    async def correlation_middleware(request: Request, call_next):
+        supplied = request.headers.get("X-Correlation-ID", "")
+        correlation_id = supplied if _CORRELATION_ID.fullmatch(supplied) else str(uuid4())
+        started = perf_counter()
+        COUNTERS.increment("http_requests_total")
+        with bind_context(correlation_id=correlation_id):
+            try:
+                response = await call_next(request)
+            except Exception:
+                COUNTERS.increment("http_errors_total")
+                log_event(
+                    logger,
+                    "request_failed",
+                    method=request.method,
+                    path=request.url.path,
+                    duration_ms=round((perf_counter() - started) * 1000, 3),
+                )
+                raise
+            if response.status_code >= 500:
+                COUNTERS.increment("http_errors_total")
+            log_event(
+                logger,
+                "request_completed",
+                method=request.method,
+                path=request.url.path,
+                status_code=response.status_code,
+                duration_ms=round((perf_counter() - started) * 1000, 3),
+            )
+            response.headers["X-Correlation-ID"] = correlation_id
+            return response
 
     def current_user(
         credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
@@ -68,6 +115,20 @@ def create_app(
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/health/live")
+    def live() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/health/ready")
+    def ready():
+        dependencies = {
+            "sqlite": "ok" if store.check_connection() else "unavailable",
+            "authentication": "ok" if auth.config is not None else "unavailable",
+        }
+        ready_status = all(value == "ok" for value in dependencies.values())
+        payload = {"status": "ready" if ready_status else "not_ready", "dependencies": dependencies}
+        return payload if ready_status else JSONResponse(status_code=503, content=payload)
+
     @app.post("/auth/token")
     def token(request: LoginRequest) -> dict[str, Any]:
         if auth.config is None:
@@ -102,7 +163,8 @@ def create_app(
         except KeyError:
             raise HTTPException(status_code=404, detail="Incident not found") from None
         try:
-            return investigate(item, model)
+            with bind_context(investigation_id=f"direct:{incident_id}"):
+                return investigate(item, model)
         except (ImportError, ConnectionError, OSError, httpx.HTTPError) as exc:
             raise HTTPException(status_code=503, detail=f"Local model unavailable: {exc}") from exc
 
@@ -127,24 +189,25 @@ def create_app(
             else str(uuid4())
         )
         try:
-            with SqliteSaver.from_conn_string(str(db_path)) as saver:
-                graph = build_graph(model, saver, runbook_index)
-                config = {"configurable": {"thread_id": run_id}}
-                checkpoint = graph.get_state(config)
-                if checkpoint.values and checkpoint.values.get("status") in {
-                    "completed", "insufficient_evidence", "blocked", "failed"
-                }:
-                    state = checkpoint.values
-                else:
-                    state = graph.invoke(
-                        {
-                            "incident_id": incident_id,
-                            "status": "pending",
-                            "retry_count": 0,
-                            "transitions": [],
-                        },
-                        config,
-                    )
+            with bind_context(investigation_id=run_id):
+                with SqliteSaver.from_conn_string(str(db_path)) as saver:
+                    graph = build_graph(model, saver, runbook_index)
+                    config = {"configurable": {"thread_id": run_id}}
+                    checkpoint = graph.get_state(config)
+                    if checkpoint.values and checkpoint.values.get("status") in {
+                        "completed", "insufficient_evidence", "blocked", "failed"
+                    }:
+                        state = checkpoint.values
+                    else:
+                        state = graph.invoke(
+                            {
+                                "incident_id": incident_id,
+                                "status": "pending",
+                                "retry_count": 0,
+                                "transitions": [],
+                            },
+                            config,
+                        )
         except (ImportError, ConnectionError, OSError, httpx.HTTPError) as exc:
             raise HTTPException(status_code=503, detail=f"Local model unavailable: {exc}") from exc
         action = state["proposed_action"]
@@ -184,7 +247,10 @@ def create_app(
     ) -> dict[str, Any]:
         proposal_or_404(proposal_id)
         try:
-            return store.approve(proposal_id, user.username)
+            result = store.approve(proposal_id, user.username)
+            COUNTERS.increment("proposals_approved_total")
+            log_event(logger, "proposal_approved", proposal_id=proposal_id, actor=user.username)
+            return result
         except ValueError as exc:
             raise HTTPException(status_code=409, detail="Proposal state conflict") from exc
 
@@ -195,7 +261,10 @@ def create_app(
     ) -> dict[str, Any]:
         proposal_or_404(proposal_id)
         try:
-            return store.deny(proposal_id, user.username)
+            result = store.deny(proposal_id, user.username)
+            COUNTERS.increment("proposals_denied_total")
+            log_event(logger, "proposal_denied", proposal_id=proposal_id, actor=user.username)
+            return result
         except ValueError as exc:
             raise HTTPException(status_code=409, detail="Proposal state conflict") from exc
 
@@ -206,7 +275,16 @@ def create_app(
     ) -> dict[str, Any]:
         proposal_or_404(proposal_id)
         try:
-            return store.execute(proposal_id, user.username)
+            result = store.execute(proposal_id, user.username)
+            COUNTERS.increment("simulated_executions_total")
+            log_event(
+                logger,
+                "simulated_action_executed",
+                proposal_id=proposal_id,
+                actor=user.username,
+                verified=result["verified"],
+            )
+            return result
         except ValueError as exc:
             raise HTTPException(status_code=409, detail="Proposal state conflict") from exc
 
@@ -217,6 +295,12 @@ def create_app(
     ) -> list[dict[str, Any]]:
         proposal_or_404(proposal_id)
         return store.audit(proposal_id)
+
+    @app.get("/ops/metrics")
+    def metrics(
+        _: Annotated[UserRecord, Depends(require_roles(Role.VIEWER, Role.OPERATOR, Role.APPROVER))],
+    ) -> dict[str, int]:
+        return COUNTERS.snapshot()
 
     return app
 

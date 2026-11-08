@@ -104,6 +104,13 @@ class ApprovalStore:
         with self._connect() as conn:
             return self._proposal(self._load(conn, proposal_id))
 
+    def check_connection(self) -> bool:
+        try:
+            with self._connect() as conn:
+                return conn.execute("SELECT 1").fetchone()[0] == 1
+        except sqlite3.Error:
+            return False
+
     def _decide(self, proposal_id: str, actor: str, status: str) -> dict[str, Any]:
         if not actor.strip():
             raise ValueError("Actor is required for explicit approval or denial")
