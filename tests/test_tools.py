@@ -33,6 +33,20 @@ def test_unknown_incident_is_rejected_by_tool():
         dispatch_tool("get_metrics", {"incident_id": "missing"})
 
 
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"incident_id": 123},
+        {"incident_id": "db-pool-001", "url": "https://example.test"},
+        {"incident_id": "db-pool-001", "python": "__import__('os')"},
+        {"incident_id": "db-pool-001", "command": "whoami"},
+    ],
+)
+def test_tools_reject_invalid_types_and_executable_instructions(args):
+    with pytest.raises(ValueError):
+        dispatch_tool("get_metrics", args)
+
+
 def test_search_runbooks_uses_persistent_semantic_index(tmp_path):
     index = RunbookIndex(tmp_path / "chroma", TinyEncoder())
     index.index("db-pool", "Database pool", "Check pool saturation before proposing remediation.")

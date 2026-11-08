@@ -3,37 +3,48 @@ from importlib.resources import files
 import os
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from incidentpilot.simulator import get_incident
 from incidentpilot.runbooks import RunbookIndex
 
 
-class GetMetrics(BaseModel):
+class ToolArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class GetMetrics(ToolArguments):
     """Read synthetic metrics for the incident."""
 
-    incident_id: str = Field(description="The incident ID being investigated")
+    incident_id: str = Field(strict=True, min_length=1, max_length=128, description="The incident ID being investigated")
 
 
-class GetLogs(BaseModel):
+class GetLogs(ToolArguments):
     """Read synthetic log lines for the incident."""
 
-    incident_id: str = Field(description="The incident ID being investigated")
+    incident_id: str = Field(strict=True, min_length=1, max_length=128, description="The incident ID being investigated")
 
 
-class GetRecentDeployments(BaseModel):
+class GetRecentDeployments(ToolArguments):
     """Read synthetic recent deployments for the incident service."""
 
-    incident_id: str = Field(description="The incident ID being investigated")
+    incident_id: str = Field(strict=True, min_length=1, max_length=128, description="The incident ID being investigated")
 
 
-class SearchRunbooks(BaseModel):
+class SearchRunbooks(ToolArguments):
     """Search local incident response runbook summaries."""
 
-    query: str = Field(description="Search terms for a runbook")
+    query: str = Field(strict=True, min_length=1, max_length=512, description="Search terms for a runbook")
 
 
 MODEL_TOOLS = [GetMetrics, GetLogs, GetRecentDeployments, SearchRunbooks]
+
+TOOL_SCHEMAS: dict[str, type[ToolArguments]] = {
+    "get_metrics": GetMetrics,
+    "get_logs": GetLogs,
+    "get_recent_deployments": GetRecentDeployments,
+    "search_runbooks": SearchRunbooks,
+}
 
 @lru_cache(maxsize=1)
 def get_default_runbook_index() -> RunbookIndex:
