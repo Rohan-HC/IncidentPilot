@@ -64,6 +64,38 @@ Run tests with `.\.venv\Scripts\python -m pytest -q`. Tests use controlled model
 
 On 31 October 2026, a live `qwen3:4b-instruct` investigation of `db-pool-001` requested `get_metrics`, `get_logs`, and `get_recent_deployments` and received their synthetic results. The full live API path reached a pending proposal, explicit approval, and verified simulated execution. A later RAG-plus-Qwen3 smoke test retrieved `db-pool.md` and produced a proposal only after the evidence gate saw that source. `pip check` found no broken requirements.
 
+## GitHub Actions CI and container delivery
+
+[![CI and Container Delivery](https://github.com/Rohan-HC/IncidentPilot/actions/workflows/tests.yml/badge.svg)](https://github.com/Rohan-HC/IncidentPilot/actions/workflows/tests.yml)
+
+The [CI workflow](.github/workflows/tests.yml) runs on pull requests and pushes to `main`, and can be started manually from the Actions tab.
+
+1. **Python tests:** Install Python 3.12 with project extras and execute pytest. Scripted model responses and deterministic embeddings mean **no Ollama, API key, or model download is required**.
+2. **Container verification:** After pytest passes, build the CPU-only Docker image and run a health-check smoke test against `GET /health`.
+3. **Image publishing:** Only a successful **push to `main`** uploads the verified image to GitHub Container Registry (GHCR). Pull requests build/test but never publish.
+
+Published tags:
+- `ghcr.io/rohan-hc/incidentpilot:latest`
+- `ghcr.io/rohan-hc/incidentpilot:sha-<first-seven-commit-characters>`
+
+The workflow uses GitHub's built-in `GITHUB_TOKEN` with scoped `packages: write` permission; no personal token or paid CI service is needed. Newly created GHCR packages are **private by default**. To allow public pulls, go to your GitHub profile's Packages, select `incidentpilot`, open **Package settings**, and change its visibility to **Public**.
+
+To run a published image on a machine with local Ollama and `qwen3:4b-instruct` installed:
+
+```bash
+docker pull ghcr.io/rohan-hc/incidentpilot:latest
+docker run --rm --name incidentpilot -p 8000:8000 \
+  --add-host=host.docker.internal:host-gateway \
+  -e OLLAMA_HOST=http://host.docker.internal:11434 \
+  -e INCIDENTPILOT_DB_PATH=/app/data/incidentpilot.db \
+  -e INCIDENTPILOT_CHROMA_PATH=/app/data/chroma \
+  -e HF_HOME=/app/data/huggingface \
+  -v incidentpilot-data:/app/data \
+  ghcr.io/rohan-hc/incidentpilot:latest
+```
+
+The health endpoint can respond without Ollama; **analysis and remediation proposals require a running Ollama model**. Publishing an image is continuous delivery, **not** a public hosted production deployment. This app is intentionally a single-user simulated local system with no authentication; do not expose it publicly.
+
 ## Limitations and honest portfolio wording
 
 - The LLM can make unsupported inferences. In one live run it asserted high request volume without a request-volume metric. The deterministic gate limits action proposals; the prose still needs human review.
@@ -71,8 +103,7 @@ On 31 October 2026, a live `qwen3:4b-instruct` investigation of `db-pool-001` re
 - This is a single-user local demo. The `actor` field is self-declared, not authenticated. SQLite audit rows are durable but not tamper-evident. Do not expose the API to untrusted users.
 - Remediation and verification are fixed simulation outcomes. No database pool, deployment, or live service changes.
 - The rules and runbooks cover three examples, not a general incident response policy. The Chroma relevance threshold is a demo heuristic, not a calibrated retrieval evaluation.
-- Docker and CI are included; their execution should be checked in the target environment before claiming they pass. `docker compose config --quiet` passed locally, but Docker Desktop's engine was not running, so no image build was verified.
+- Docker Compose was verified locally: the image built successfully, the API returned 200 from `/health`, all three incidents were listed, and the container reached host Ollama. A complete database-pool analysis also produced a pending proposal; pre-approval execution returned 409, approval and simulated execution succeeded, verification was true, repeated execution was idempotent, and audit events persisted. The original GitHub-hosted Python CI run passed on 1 November 2026; the expanded Docker build, smoke test, and GHCR publish jobs must be validated separately.
 
 Suitable résumé language: **“Built a local simulated incident-response agent with Ollama tool calling, Chroma runbook retrieval, LangGraph/SQLite state, and approval-gated, idempotent simulated remediation.”**
 
-The [design](docs/superpowers/specs/2026-10-31-incidentpilot-design.md) and [implementation plan](docs/superpowers/plans/2026-10-31-incidentpilot.md) record the decisions and verification work.
