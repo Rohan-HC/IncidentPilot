@@ -2,6 +2,12 @@
 
 IncidentPilot is a local, **simulated** incident response project. It is being built incrementally as an AI engineering portfolio piece. All metrics, logs, deployments, and remediation in this repo are synthetic. No production incident or operational impact is claimed.
 
+## Project preview
+
+![IncidentPilot interactive API showing incident investigation and approval-gated remediation endpoints](docs/screenshots/incidentpilot-api.png)
+
+The interactive FastAPI surface exposes the complete simulated workflow: incident discovery, investigation, evidence analysis, human approval or denial, execution, and audit history.
+
 ## What it demonstrates
 
 - Three deterministic incident fixtures: database pool exhaustion, faulty deployment, and insufficient evidence.
